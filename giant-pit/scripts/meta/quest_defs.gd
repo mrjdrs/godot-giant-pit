@@ -40,3 +40,38 @@ static func all_ids() -> Array:
 
 static func get_def(quest_id: String) -> Dictionary:
 	return QUESTS.get(quest_id, {})
+
+
+## 局内进度：{name, desc, current, target, progress_text, complete, reward}
+static func run_progress(quest_id: String, inventory_slots: Array, kill_scale: int, rescue_done: bool) -> Dictionary:
+	if quest_id == "" or not QUESTS.has(quest_id):
+		return {}
+	var def: Dictionary = get_def(quest_id)
+	var current := 0
+	var target := 1
+	match str(def.get("type")):
+		TYPE_GATHER:
+			target = int(def.get("count", 1))
+			var need_id := str(def.get("mat_id"))
+			for entry in inventory_slots:
+				if entry.get("type") == "mat" and str(entry.get("id")) == need_id:
+					current += int(entry.get("count", 0))
+			current = mini(current, target)
+		TYPE_KILL:
+			target = int(def.get("count", 1))
+			current = mini(kill_scale, target)
+		TYPE_RESCUE:
+			target = 1
+			current = 1 if rescue_done else 0
+	var progress_text := "%d/%d" % [current, target]
+	return {
+		"id": quest_id,
+		"name": Loc.t(str(def.get("name_key", ""))),
+		"desc": Loc.t(str(def.get("desc_key", ""))),
+		"current": current,
+		"target": target,
+		"progress_text": progress_text,
+		"complete": current >= target,
+		"reward_gold": int(def.get("reward_gold", 0)),
+		"reward_mat": def.get("reward_mat", {}),
+	}

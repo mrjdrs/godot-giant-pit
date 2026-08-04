@@ -98,7 +98,9 @@ func _tooltip_for(index: int) -> String:
 		return "%s\n%s" % [RuneCatalog.display_name(id), effect]
 	var name := MaterialCatalog.display_name(id)
 	var cnt := int(e.get("count", 1))
-	return Loc.t("item.mat_tip", [name, cnt])
+	var desc_key := "mat.%s.desc" % id
+	var desc := Loc.t(desc_key) if Loc.has_key(desc_key) else ""
+	return Loc.t("item.mat_tip", [name, cnt, desc]).strip_edges()
 
 
 func clear_all() -> void:

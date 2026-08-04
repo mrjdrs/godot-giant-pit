@@ -37,6 +37,8 @@ func _ready() -> void:
 	btn_c.pressed.connect(_on_btn_c)
 	btn_close.text = Loc.t("hub.close")
 	hud.get_node("HintLabel").text = Loc.t("hint.hub")
+	if stash_grid.has_signal("slot_hovered") and not stash_grid.slot_hovered.is_connected(_on_stash_hover):
+		stash_grid.slot_hovered.connect(_on_stash_hover)
 	_refresh_status()
 	MetaProgress.changed.connect(_refresh_status)
 	AudioManager.play_bgm()
@@ -164,9 +166,16 @@ func _open_board() -> void:
 	var lines: PackedStringArray = []
 	if MetaProgress.active_quest_id != "":
 		var cur: Dictionary = QuestDefs.get_def(MetaProgress.active_quest_id)
+		var info: Dictionary = QuestDefs.run_progress(
+			MetaProgress.active_quest_id, [], 0, false
+		)
 		lines.append(Loc.t("hub.quest_active", [Loc.t(str(cur.get("name_key")))]))
+		if not info.is_empty():
+			lines.append(Loc.t("hub.quest_target", [str(info.get("progress_text"))]))
 		lines.append(Loc.t(str(cur.get("desc_key"))))
 		lines.append(_quest_reward_line(cur))
+		lines.append("")
+		lines.append(Loc.t("hub.quest_progress_hint"))
 		btn_a.text = Loc.t("hub.abandon")
 		btn_a.visible = true
 		btn_b.visible = false
@@ -177,7 +186,11 @@ func _open_board() -> void:
 		for i in ids.size():
 			var qid: String = str(ids[i])
 			var d: Dictionary = QuestDefs.get_def(qid)
-			lines.append("%d) %s — %s" % [i + 1, Loc.t(str(d.get("name_key"))), Loc.t(str(d.get("desc_key")))])
+			var tgt := int(d.get("count", 1))
+			if str(d.get("type")) == QuestDefs.TYPE_RESCUE:
+				tgt = 1
+			lines.append("%d) %s — 目标 %d" % [i + 1, Loc.t(str(d.get("name_key"))), tgt])
+			lines.append("   %s" % Loc.t(str(d.get("desc_key"))))
 			lines.append("   %s" % _quest_reward_line(d))
 		btn_a.text = Loc.t("hub.accept") + "①"
 		btn_b.text = Loc.t("hub.accept") + "②"
@@ -264,22 +277,34 @@ func _open_stash() -> void:
 	_mode = "stash"
 	panel.visible = true
 	panel_title.text = Loc.t("hub.stash_title")
-	panel_body.visible = true
-	panel_body.text = Loc.t("hub.stash_hint") if not MetaProgress.stash.is_empty() else Loc.t("hub.stash_empty")
+	var empty := MetaProgress.stash.is_empty()
+	panel_body.visible = empty
+	panel_body.text = Loc.t("hub.stash_empty") if empty else ""
+	panel_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel_body.offset_bottom = 80.0
 	stash_grid.visible = true
 	if stash_grid.has_method("set_stash_dict"):
 		stash_grid.set_stash_dict(MetaProgress.stash)
+	if panel.has_node("Tooltip"):
+		panel.get_node("Tooltip").text = ""
 	btn_a.visible = false
 	btn_b.visible = false
 	btn_c.visible = false
+
+
+func _on_stash_hover(_index: int, tip: String) -> void:
+	if panel.has_node("Tooltip"):
+		panel.get_node("Tooltip").text = tip
 
 
 func _show_text_panel() -> void:
 	panel.visible = true
 	stash_grid.visible = false
 	panel_body.visible = true
+	panel_body.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel_body.offset_bottom = 280.0
+	if panel.has_node("Tooltip"):
+		panel.get_node("Tooltip").text = ""
 
 
 func _open_pit() -> void:
@@ -382,6 +407,8 @@ func _enter_pit() -> void:
 func _close_panel() -> void:
 	panel.visible = false
 	stash_grid.visible = false
+	if panel.has_node("Tooltip"):
+		panel.get_node("Tooltip").text = ""
 	_mode = ""
 
 

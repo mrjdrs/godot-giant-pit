@@ -1,18 +1,18 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene format=3 uid="uid://b2r7pttjpndkx"]
 
-[ext_resource type="Script" path="res://scripts/hub/crane_hub.gd" id="1_script"]
-[ext_resource type="Script" path="res://scripts/ui/item_slot_grid.gd" id="2_grid"]
+[ext_resource type="Script" uid="uid://cucec3h0xcdhh" path="res://scripts/hub/crane_hub.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://cbxvqfpyuh0me" path="res://scripts/ui/item_slot_grid.gd" id="2_grid"]
 
-[node name="CraneHub" type="Node2D"]
+[node name="CraneHub" type="Node2D" unique_id=1085726592]
 script = ExtResource("1_script")
 
-[node name="World" type="Node2D" parent="."]
+[node name="World" type="Node2D" parent="." unique_id=1475833241]
 
-[node name="Entities" type="Node2D" parent="World"]
+[node name="Entities" type="Node2D" parent="World" unique_id=316263069]
 
-[node name="HUD" type="CanvasLayer" parent="."]
+[node name="HUD" type="CanvasLayer" parent="." unique_id=1923921854]
 
-[node name="HintLabel" type="Label" parent="HUD"]
+[node name="HintLabel" type="Label" parent="HUD" unique_id=1611487661]
 offset_left = 12.0
 offset_top = 8.0
 offset_right = 700.0
@@ -20,7 +20,7 @@ offset_bottom = 56.0
 theme_override_font_sizes/font_size = 13
 text = "鹤城"
 
-[node name="StatusLabel" type="Label" parent="HUD"]
+[node name="StatusLabel" type="Label" parent="HUD" unique_id=496572367]
 offset_left = 12.0
 offset_top = 60.0
 offset_right = 700.0
@@ -28,7 +28,7 @@ offset_bottom = 88.0
 theme_override_font_sizes/font_size = 14
 text = "状态"
 
-[node name="PromptLabel" type="Label" parent="HUD"]
+[node name="PromptLabel" type="Label" parent="HUD" unique_id=1180757506]
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -42,7 +42,8 @@ theme_override_colors/font_color = Color(1, 0.92, 0.55, 1)
 theme_override_font_sizes/font_size = 16
 horizontal_alignment = 1
 
-[node name="ToastLabel" type="Label" parent="HUD"]
+[node name="ToastLabel" type="Label" parent="HUD" unique_id=341277237]
+modulate = Color(1, 1, 1, 0)
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
@@ -51,9 +52,8 @@ offset_top = 100.0
 offset_right = 200.0
 offset_bottom = 132.0
 horizontal_alignment = 1
-modulate = Color(1, 1, 1, 0)
 
-[node name="Panel" type="Panel" parent="HUD"]
+[node name="Panel" type="Panel" parent="HUD" unique_id=305713402]
 visible = false
 anchors_preset = 8
 anchor_left = 0.5
@@ -65,7 +65,8 @@ offset_top = -220.0
 offset_right = 280.0
 offset_bottom = 220.0
 
-[node name="Title" type="Label" parent="HUD/Panel"]
+[node name="Title" type="Label" parent="HUD/Panel" unique_id=1056152006]
+layout_mode = 0
 offset_left = 16.0
 offset_top = 12.0
 offset_right = 540.0
@@ -74,18 +75,16 @@ theme_override_font_sizes/font_size = 18
 text = "标题"
 horizontal_alignment = 1
 
-[node name="Body" type="RichTextLabel" parent="HUD/Panel"]
+[node name="Body" type="RichTextLabel" parent="HUD/Panel" unique_id=275987820]
+layout_mode = 0
 offset_left = 20.0
 offset_top = 48.0
 offset_right = 540.0
 offset_bottom = 200.0
-bbcode_enabled = false
-fit_content = false
-scroll_active = true
-text = ""
 
-[node name="StashGrid" type="GridContainer" parent="HUD/Panel"]
+[node name="StashGrid" type="GridContainer" parent="HUD/Panel" unique_id=2018355197]
 visible = false
+layout_mode = 0
 offset_left = 24.0
 offset_top = 56.0
 offset_right = 536.0
@@ -96,30 +95,43 @@ slot_count = 24
 columns_count = 6
 slot_size = Vector2(48, 48)
 
-[node name="BtnA" type="Button" parent="HUD/Panel"]
+[node name="BtnA" type="Button" parent="HUD/Panel" unique_id=2108141481]
+layout_mode = 0
 offset_left = 20.0
 offset_top = 300.0
 offset_right = 160.0
 offset_bottom = 340.0
 text = "A"
 
-[node name="BtnB" type="Button" parent="HUD/Panel"]
+[node name="BtnB" type="Button" parent="HUD/Panel" unique_id=1640343378]
+layout_mode = 0
 offset_left = 180.0
 offset_top = 300.0
 offset_right = 320.0
 offset_bottom = 340.0
 text = "B"
 
-[node name="BtnC" type="Button" parent="HUD/Panel"]
+[node name="BtnC" type="Button" parent="HUD/Panel" unique_id=846959748]
+layout_mode = 0
 offset_left = 340.0
 offset_top = 300.0
 offset_right = 480.0
 offset_bottom = 340.0
 text = "C"
 
-[node name="BtnClose" type="Button" parent="HUD/Panel"]
+[node name="BtnClose" type="Button" parent="HUD/Panel" unique_id=301973552]
+layout_mode = 0
 offset_left = 200.0
 offset_top = 350.0
 offset_right = 360.0
 offset_bottom = 384.0
 text = "关闭"
+
+[node name="Tooltip" type="Label" parent="HUD/Panel" unique_id=1174183008]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 286.0
+offset_right = 540.0
+offset_bottom = 340.0
+theme_override_font_sizes/font_size = 13
+autowrap_mode = 3

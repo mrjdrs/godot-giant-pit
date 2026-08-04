@@ -6,6 +6,7 @@ const RoomData = preload("res://scripts/pit/room_data.gd")
 const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
+const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 
 const PlayerScene = preload("res://scenes/player/player.tscn")
 const EnemyScene = preload("res://scenes/enemy/pit_enemy.tscn")
@@ -34,6 +35,7 @@ var _run_over: bool = false
 var _death_selected: int = -1
 var _death_wired: bool = false
 var _bag_open: bool = false
+var _quest_open: bool = false
 
 
 func _ready() -> void:
@@ -45,6 +47,8 @@ func _ready() -> void:
 		hud.get_node("BagPanel").visible = false
 	if hud.has_node("RuneReplace"):
 		hud.get_node("RuneReplace").visible = false
+	if hud.has_node("QuestPanel"):
+		hud.get_node("QuestPanel").visible = false
 	AudioManager.play_bgm()
 	call_deferred("_deferred_boot")
 
@@ -54,6 +58,7 @@ func _deferred_boot() -> void:
 	_wire_death_ui()
 	_wire_bag_ui()
 	_wire_rune_replace_ui()
+	_wire_quest_ui()
 	extract_ui.get_node("Panel/RetryButton").text = Loc.t("extract.back_hub")
 	extract_ui.get_node("Panel/ArenaButton").visible = false
 
@@ -114,11 +119,14 @@ func _input(event: InputEvent) -> void:
 func _build_floor_level() -> void:
 	## 首次启动时子节点为空；下潜/重建请走 _rebuild_floor_safe
 	_fog_by_room.clear()
+	_current_room_id = -1
 	rooms = PitGenerator.generate(0, RunSession.floor_index)
 	_build_rooms()
 	_spawn_player()
 	_spawn_room_contents()
 	_setup_hud()
+	## 每层重建都必须重绑小地图，否则会继续画旧层的 explored 状态
+	_setup_minimap()
 
 
 func _queue_clear(node: Node) -> void:
@@ -454,6 +462,7 @@ func _reveal_room(room) -> void:
 			if is_instance_valid(fog):
 				fog.visible = false
 		)
+	_refresh_minimap()
 
 
 func _setup_hud() -> void:
@@ -591,6 +600,123 @@ func _update_hud() -> void:
 		hud.get_node("FloorLabel").text = "%s | %s" % [Loc.t("hud.floor", [RunSession.floor_index]), Loc.t("hud.brand", [bname])]
 	if _current_room_id >= 0 and _current_room_id < rooms.size():
 		hud.get_node("RoomLabel").text = Loc.t(rooms[_current_room_id].type_name_key())
+	_update_quest_hud()
+	_refresh_minimap_current()
+
+
+func _quest_progress() -> Dictionary:
+	var slots: Array = player.inventory.slots if player else []
+	return QuestDefs.run_progress(
+		RunSession.quest_id_snapshot,
+		slots,
+		RunSession.kill_scale,
+		RunSession.rescue_done
+	)
+
+
+func _update_quest_hud() -> void:
+	var info: Dictionary = _quest_progress()
+	if hud.has_node("QuestSummary"):
+		if info.is_empty():
+			hud.get_node("QuestSummary").text = Loc.t("hud.quest_none")
+		else:
+			var line := Loc.t("hud.quest_progress", [str(info.get("name")), str(info.get("progress_text"))])
+			if bool(info.get("complete", false)):
+				line += " " + Loc.t("hud.quest_done")
+			hud.get_node("QuestSummary").text = line
+	if _quest_open:
+		_refresh_quest_panel()
+
+
+func _wire_quest_ui() -> void:
+	if hud.has_node("QuestBtn"):
+		var btn: Button = hud.get_node("QuestBtn")
+		btn.text = Loc.t("hud.quest_btn")
+		if not btn.pressed.is_connected(_toggle_quest_panel):
+			btn.pressed.connect(_toggle_quest_panel)
+	if hud.has_node("QuestPanel/CloseBtn"):
+		var close: Button = hud.get_node("QuestPanel/CloseBtn")
+		close.text = Loc.t("hub.close")
+		if not close.pressed.is_connected(_close_quest_panel):
+			close.pressed.connect(_close_quest_panel)
+	if hud.has_node("QuestPanel/Title"):
+		hud.get_node("QuestPanel/Title").text = Loc.t("hud.quest_panel_title")
+	_update_quest_hud()
+
+
+func _toggle_quest_panel() -> void:
+	_quest_open = not _quest_open
+	if hud.has_node("QuestPanel"):
+		hud.get_node("QuestPanel").visible = _quest_open
+	if _quest_open:
+		_refresh_quest_panel()
+
+
+func _close_quest_panel() -> void:
+	_quest_open = false
+	if hud.has_node("QuestPanel"):
+		hud.get_node("QuestPanel").visible = false
+
+
+func _refresh_quest_panel() -> void:
+	if not hud.has_node("QuestPanel/Body"):
+		return
+	var body: Label = hud.get_node("QuestPanel/Body")
+	var info: Dictionary = _quest_progress()
+	if info.is_empty():
+		body.text = Loc.t("hud.quest_none_detail")
+		return
+	var mats: Dictionary = info.get("reward_mat", {})
+	var mat_parts: PackedStringArray = []
+	for mid in mats.keys():
+		mat_parts.append("%s x%d" % [MaterialCatalog.display_name(str(mid)), int(mats[mid])])
+	var mat_text := Loc.t("quest.reward_mats_none") if mat_parts.is_empty() else ", ".join(mat_parts)
+	var reward := Loc.t("quest.reward", [int(info.get("reward_gold", 0)), mat_text])
+	var done_mark := " " + Loc.t("hud.quest_done") if bool(info.get("complete", false)) else ""
+	body.text = Loc.t("hud.quest_detail", [
+		str(info.get("name")),
+		str(info.get("progress_text")),
+		done_mark,
+		str(info.get("desc")),
+		reward,
+	])
+
+
+func _setup_minimap() -> void:
+	if not hud.has_node("Minimap"):
+		return
+	var mm = hud.get_node("Minimap")
+	if mm.has_method("reset"):
+		mm.reset()
+	if mm.has_method("set_rooms"):
+		mm.set_rooms(rooms)
+	if mm.has_method("set_current"):
+		mm.set_current(_current_room_id)
+	if mm.has_method("refresh"):
+		mm.refresh()
+
+
+func _refresh_minimap() -> void:
+	if not hud.has_node("Minimap"):
+		return
+	var mm = hud.get_node("Minimap")
+	## 下潜/重建后 rooms 会换新数组；旧引用会导致新房间不显示
+	if not is_same(mm.rooms, rooms):
+		mm.set_rooms(rooms)
+	mm.set_current(_current_room_id)
+	mm.refresh()
+
+
+func _refresh_minimap_current() -> void:
+	if not hud.has_node("Minimap"):
+		return
+	var mm = hud.get_node("Minimap")
+	if not is_same(mm.rooms, rooms):
+		mm.set_rooms(rooms)
+		mm.set_current(_current_room_id)
+		mm.refresh()
+		return
+	mm.set_current(_current_room_id)
 
 
 func _on_extract(_by: Node) -> void:
