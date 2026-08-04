@@ -14,10 +14,12 @@ const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
 @onready var panel: Panel = $HUD/Panel
 @onready var panel_title: Label = $HUD/Panel/Title
 @onready var panel_body: RichTextLabel = $HUD/Panel/Body
+@onready var stash_grid: GridContainer = $HUD/Panel/StashGrid
 @onready var btn_a: Button = $HUD/Panel/BtnA
 @onready var btn_b: Button = $HUD/Panel/BtnB
 @onready var btn_c: Button = $HUD/Panel/BtnC
 @onready var btn_close: Button = $HUD/Panel/BtnClose
+@onready var prompt_label: Label = $HUD/PromptLabel
 
 var player: CharacterBody2D = null
 var _mode: String = ""
@@ -28,6 +30,7 @@ func _ready() -> void:
 	_build_hub()
 	_spawn_player()
 	panel.visible = false
+	stash_grid.visible = false
 	btn_close.pressed.connect(_close_panel)
 	btn_a.pressed.connect(_on_btn_a)
 	btn_b.pressed.connect(_on_btn_b)
@@ -36,6 +39,16 @@ func _ready() -> void:
 	hud.get_node("HintLabel").text = Loc.t("hint.hub")
 	_refresh_status()
 	MetaProgress.changed.connect(_refresh_status)
+	AudioManager.play_bgm()
+
+
+func _process(_delta: float) -> void:
+	if player == null:
+		return
+	if panel.visible:
+		prompt_label.text = ""
+		return
+	prompt_label.text = player.get_interact_prompt()
 
 
 func _build_hub() -> void:
@@ -134,15 +147,26 @@ func _on_facility(facility_id: String, _by: Node) -> void:
 			_open_pit()
 
 
+func _quest_reward_line(def: Dictionary) -> String:
+	var gold := int(def.get("reward_gold", 0))
+	var mats: Dictionary = def.get("reward_mat", {})
+	var mat_parts: PackedStringArray = []
+	for mid in mats.keys():
+		mat_parts.append("%s x%d" % [MaterialCatalog.display_name(str(mid)), int(mats[mid])])
+	var mat_text := Loc.t("quest.reward_mats_none") if mat_parts.is_empty() else ", ".join(mat_parts)
+	return Loc.t("quest.reward", [gold, mat_text])
+
+
 func _open_board() -> void:
 	_mode = "board"
-	panel.visible = true
+	_show_text_panel()
 	panel_title.text = Loc.t("hub.board_title")
 	var lines: PackedStringArray = []
 	if MetaProgress.active_quest_id != "":
 		var cur: Dictionary = QuestDefs.get_def(MetaProgress.active_quest_id)
-		lines.append("进行中：%s" % Loc.t(str(cur.get("name_key"))))
+		lines.append(Loc.t("hub.quest_active", [Loc.t(str(cur.get("name_key")))]))
 		lines.append(Loc.t(str(cur.get("desc_key"))))
+		lines.append(_quest_reward_line(cur))
 		btn_a.text = Loc.t("hub.abandon")
 		btn_a.visible = true
 		btn_b.visible = false
@@ -154,6 +178,7 @@ func _open_board() -> void:
 			var qid: String = str(ids[i])
 			var d: Dictionary = QuestDefs.get_def(qid)
 			lines.append("%d) %s — %s" % [i + 1, Loc.t(str(d.get("name_key"))), Loc.t(str(d.get("desc_key")))])
+			lines.append("   %s" % _quest_reward_line(d))
 		btn_a.text = Loc.t("hub.accept") + "①"
 		btn_b.text = Loc.t("hub.accept") + "②"
 		btn_c.text = Loc.t("hub.accept") + "③"
@@ -163,21 +188,52 @@ func _open_board() -> void:
 	panel_body.text = "\n".join(lines)
 
 
+func _weight_line(level: int, key: String) -> String:
+	var w: Dictionary = MindTable.BRAND_WEIGHTS.get(clampi(level, 1, 5), MindTable.BRAND_WEIGHTS[1])
+	return Loc.t(key, [
+		int(w.get("iron", 0)),
+		int(w.get("copper", 0)),
+		int(w.get("silver", 0)),
+		int(w.get("gold", 0)),
+	])
+
+
 func _open_quiet() -> void:
 	_mode = "quiet"
-	panel.visible = true
+	_show_text_panel()
 	panel_title.text = Loc.t("hub.quiet_title")
-	var cost := MindTable.cost_to_next(MetaProgress.mind_level)
-	panel_body.text = Loc.t("hub.quiet_hint", [MetaProgress.mind_level, cost])
+	var lvl := MetaProgress.mind_level
+	var cost := MindTable.cost_to_next(lvl)
+	var lines: PackedStringArray = []
+	lines.append(Loc.t("hub.quiet_hint", [lvl, cost]))
+	lines.append(_weight_line(lvl, "hub.quiet_weights"))
+	if lvl < 5:
+		lines.append(_weight_line(lvl + 1, "hub.quiet_effect"))
+	else:
+		lines.append(Loc.t("hub.quiet_max"))
+	panel_body.text = "\n".join(lines)
 	btn_a.text = Loc.t("hub.quiet_do")
-	btn_a.visible = true
+	btn_a.visible = lvl < 5
 	btn_b.visible = false
 	btn_c.visible = false
 
 
+func _format_cost(costs: Dictionary) -> String:
+	var parts: PackedStringArray = []
+	for mid in costs.keys():
+		var need := int(costs[mid])
+		var have := MetaProgress.stash_count(str(mid))
+		var name := MaterialCatalog.display_name(str(mid))
+		var piece := "%s x%d（有%d）" % [name, need, have]
+		if have < need:
+			piece += Loc.t("hub.cost_lack")
+		parts.append(piece)
+	return "、".join(parts)
+
+
 func _open_alchemy() -> void:
 	_mode = "alchemy"
-	panel.visible = true
+	_show_text_panel()
 	panel_title.text = Loc.t("hub.alchemy_title")
 	panel_body.text = _equip_text()
 	btn_a.text = Loc.t("hub.craft") + "·" + Loc.t("equip.chest")
@@ -196,9 +252,11 @@ func _equip_text() -> String:
 		if bool(data.get("owned", false)):
 			lines.append("%s：%s" % [Loc.t(name_key), Loc.t("equip.owned", [int(data.get("upgrade", 0)), int(data.get("wear", 0))])])
 			var st: Dictionary = Equipment.effective_stats(data, slot)
-			lines.append("  生命+%.0f 防御+%.0f 伤害+%.0f%%" % [st.max_hp, st.defense, st.damage * 100.0])
+			lines.append("  " + Loc.t("equip.stats", [st.max_hp, st.defense, st.damage * 100.0]))
+			lines.append("  " + Loc.t("hub.upgrade_cost", [_format_cost({Equipment.UPGRADE_MAT: Equipment.UPGRADE_COST})]))
 		else:
 			lines.append("%s：%s" % [Loc.t(name_key), Loc.t("equip.not_owned")])
+			lines.append("  " + Loc.t("hub.craft_cost", [_format_cost(Equipment.craft_cost(slot))]))
 	return "\n".join(lines)
 
 
@@ -206,16 +264,27 @@ func _open_stash() -> void:
 	_mode = "stash"
 	panel.visible = true
 	panel_title.text = Loc.t("hub.stash_title")
-	var lines: PackedStringArray = MetaProgress.describe_stash()
-	panel_body.text = Loc.t("hub.stash_empty") if lines.is_empty() else "\n".join(lines)
+	panel_body.visible = true
+	panel_body.text = Loc.t("hub.stash_hint") if not MetaProgress.stash.is_empty() else Loc.t("hub.stash_empty")
+	panel_body.offset_bottom = 80.0
+	stash_grid.visible = true
+	if stash_grid.has_method("set_stash_dict"):
+		stash_grid.set_stash_dict(MetaProgress.stash)
 	btn_a.visible = false
 	btn_b.visible = false
 	btn_c.visible = false
 
 
+func _show_text_panel() -> void:
+	panel.visible = true
+	stash_grid.visible = false
+	panel_body.visible = true
+	panel_body.offset_bottom = 280.0
+
+
 func _open_pit() -> void:
 	_mode = "pit"
-	panel.visible = true
+	_show_text_panel()
 	panel_title.text = Loc.t("hub.enter")
 	panel_body.text = Loc.t("hub.enter_pit")
 	btn_a.text = Loc.t("hub.enter")
@@ -229,7 +298,7 @@ func _on_btn_a() -> void:
 		"board":
 			if MetaProgress.active_quest_id != "":
 				MetaProgress.abandon_quest()
-				_toast("已放弃委托")
+				_toast(Loc.t("hub.abandon_toast"))
 				_open_board()
 			else:
 				_accept_quest_index(0)
@@ -284,14 +353,13 @@ func _craft(slot: String) -> void:
 	if r == "ok":
 		_toast(Loc.t("hub.craft_ok", [Loc.t(name_key)]))
 	elif r == "owned":
-		_toast("已拥有")
+		_toast(Loc.t("hub.owned_toast"))
 	else:
 		_toast(Loc.t("hub.no_mats"))
 	_open_alchemy()
 
 
 func _upgrade_any() -> void:
-	## 优先强化胸甲，否则挂坠
 	for slot in [Equipment.SLOT_CHEST, Equipment.SLOT_AMULET]:
 		if bool(MetaProgress.equipment[slot].get("owned", false)):
 			var r := MetaProgress.try_upgrade(slot)
@@ -313,6 +381,7 @@ func _enter_pit() -> void:
 
 func _close_panel() -> void:
 	panel.visible = false
+	stash_grid.visible = false
 	_mode = ""
 
 

@@ -9,6 +9,7 @@ signal died
 signal toast(text: String)
 signal loadout_changed
 signal inventory_changed
+signal rune_replace_requested(rune_id: String, candidates: Array)
 
 enum State { IDLE, MOVE, ATTACK_LIGHT, ATTACK_HEAVY, ROLL }
 
@@ -53,11 +54,15 @@ var hp: float = BASE_MAX_HP
 var inventory = InventoryScript.new()
 var runes = RuneLoadoutScript.new()
 var nearby_interactable: Node = null
+var nearby_interactables: Array = []
+var _nearby_focus: int = 0
 var input_locked: bool = false
 var combat_enabled: bool = true
 var brand_quality: String = "iron"
 var equip_bonus: Dictionary = {"max_hp": 0.0, "defense": 0.0, "damage": 0.0}
 var _hurt_flash: float = 0.0
+var _pending_rune_pickup: Node = null
+var _pending_rune_id: String = ""
 
 
 func _ready() -> void:
@@ -93,6 +98,11 @@ func _physics_process(delta: float) -> void:
 		_handle_combat_input()
 		if Input.is_action_just_pressed("interact"):
 			_try_interact()
+		if Input.is_action_just_pressed("cycle_interact"):
+			_cycle_nearby(1)
+		if Input.is_action_just_pressed("toggle_bag"):
+			## 由场景 HUD 监听；这里也发 toast 提示留给 pit_floor
+			pass
 
 	match state:
 		State.IDLE, State.MOVE:
@@ -198,6 +208,7 @@ func _start_roll() -> void:
 	roll_timer = ROLL_DURATION
 	invincible = true
 	hitbox.disable()
+	AudioManager.sfx_roll()
 
 
 func _start_light_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
@@ -295,6 +306,7 @@ func _set_hitbox_size(size: Vector2, offset: Vector2) -> void:
 
 func _on_hitbox_hit(_hurtbox: Area2D) -> void:
 	HitstopUtil.freeze(get_tree(), 0.055)
+	AudioManager.sfx_blade()
 	print(Loc.t("sfx.blade_hit"))
 
 
@@ -305,6 +317,7 @@ func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	hp = maxf(hp - mitigated, 0.0)
 	_hurt_flash = 0.2
 	hp_changed.emit(hp, max_hp)
+	AudioManager.sfx_hurt_player()
 	if from_pos != Vector2.ZERO:
 		var push := (global_position - from_pos).normalized() * 120.0
 		velocity += push
@@ -329,30 +342,109 @@ func try_add_rune(rune_id: String) -> String:
 
 
 func set_nearby_interactable(node: Node) -> void:
-	nearby_interactable = node
+	if node == null:
+		return
+	if not nearby_interactables.has(node):
+		nearby_interactables.append(node)
+	_refresh_nearby_focus()
 
 
 func clear_nearby_interactable(node: Node) -> void:
-	if nearby_interactable == node:
-		nearby_interactable = null
+	nearby_interactables.erase(node)
+	_refresh_nearby_focus()
+
+
+func _refresh_nearby_focus() -> void:
+	var focused = nearby_interactable
+	var valid: Array = []
+	for n in nearby_interactables:
+		if is_instance_valid(n) and n.has_method("can_interact") and n.can_interact(self):
+			valid.append(n)
+	nearby_interactables = valid
+	nearby_interactables.sort_custom(func(a, b):
+		return global_position.distance_squared_to(a.global_position) < global_position.distance_squared_to(b.global_position)
+	)
+	if nearby_interactables.is_empty():
+		_set_focus_node(null)
+		_nearby_focus = 0
+		return
+	var idx := nearby_interactables.find(focused)
+	if idx >= 0:
+		_nearby_focus = idx
+	else:
+		_nearby_focus = clampi(_nearby_focus, 0, nearby_interactables.size() - 1)
+	_set_focus_node(nearby_interactables[_nearby_focus])
+
+
+func _cycle_nearby(delta: int) -> void:
+	_refresh_nearby_focus()
+	if nearby_interactables.size() <= 1:
+		return
+	_nearby_focus = (_nearby_focus + delta) % nearby_interactables.size()
+	if _nearby_focus < 0:
+		_nearby_focus += nearby_interactables.size()
+	_set_focus_node(nearby_interactables[_nearby_focus])
+
+
+func _set_focus_node(node: Node) -> void:
+	if nearby_interactable != null and is_instance_valid(nearby_interactable) and nearby_interactable.has_method("set_focus_highlight"):
+		nearby_interactable.set_focus_highlight(false)
+	nearby_interactable = node
+	if nearby_interactable != null and nearby_interactable.has_method("set_focus_highlight"):
+		nearby_interactable.set_focus_highlight(true)
 
 
 func _try_interact() -> void:
+	_refresh_nearby_focus()
 	if nearby_interactable != null and is_instance_valid(nearby_interactable):
 		if nearby_interactable.has_method("interact"):
 			nearby_interactable.interact(self)
+			AudioManager.sfx_interact()
+
+
+func get_interact_prompt() -> String:
+	_refresh_nearby_focus()
+	if nearby_interactable == null or not is_instance_valid(nearby_interactable):
+		return ""
+	if not nearby_interactable.has_method("can_interact") or not nearby_interactable.can_interact(self):
+		return ""
+	var base := ""
+	if nearby_interactable.has_method("get_prompt"):
+		base = nearby_interactable.get_prompt()
+	if nearby_interactables.size() > 1:
+		return Loc.t("hud.interact_multi", [base, _nearby_focus + 1, nearby_interactables.size()])
+	return base
 
 
 func show_toast(text: String) -> void:
 	toast.emit(text)
 
 
-func get_interact_prompt() -> String:
-	if nearby_interactable != null and is_instance_valid(nearby_interactable):
-		if nearby_interactable.has_method("can_interact") and nearby_interactable.can_interact(self):
-			if nearby_interactable.has_method("get_prompt"):
-				return nearby_interactable.get_prompt()
-	return ""
+func request_rune_replace(pickup: Node, rune_id: String) -> void:
+	_pending_rune_pickup = pickup
+	_pending_rune_id = rune_id
+	var candidates: Array = runes.ids_in_same_group(rune_id)
+	rune_replace_requested.emit(rune_id, candidates)
+	show_toast(Loc.t("rune.replace_hint"))
+
+
+func confirm_rune_replace(old_id: String) -> void:
+	if _pending_rune_id == "":
+		return
+	var r := runes.replace_rune(old_id, _pending_rune_id)
+	if r == "ok":
+		const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+		show_toast(Loc.t("rune.replaced", [RuneCatalog.display_name(_pending_rune_id)]))
+		AudioManager.sfx_pickup()
+		if is_instance_valid(_pending_rune_pickup):
+			_pending_rune_pickup.queue_free()
+	_pending_rune_pickup = null
+	_pending_rune_id = ""
+
+
+func cancel_rune_replace() -> void:
+	_pending_rune_pickup = null
+	_pending_rune_id = ""
 
 
 func _on_runes_changed() -> void:

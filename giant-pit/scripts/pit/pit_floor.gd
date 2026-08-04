@@ -33,6 +33,7 @@ var _current_room_id: int = -1
 var _run_over: bool = false
 var _death_selected: int = -1
 var _death_wired: bool = false
+var _bag_open: bool = false
 
 
 func _ready() -> void:
@@ -40,12 +41,19 @@ func _ready() -> void:
 		RunSession.begin_run()
 	extract_ui.visible = false
 	death_ui.visible = false
+	if hud.has_node("BagPanel"):
+		hud.get_node("BagPanel").visible = false
+	if hud.has_node("RuneReplace"):
+		hud.get_node("RuneReplace").visible = false
+	AudioManager.play_bgm()
 	call_deferred("_deferred_boot")
 
 
 func _deferred_boot() -> void:
 	_build_floor_level()
 	_wire_death_ui()
+	_wire_bag_ui()
+	_wire_rune_replace_ui()
 	extract_ui.get_node("Panel/RetryButton").text = Loc.t("extract.back_hub")
 	extract_ui.get_node("Panel/ArenaButton").visible = false
 
@@ -58,6 +66,21 @@ func _process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			if player:
+				player._cycle_nearby(-1)
+			get_viewport().set_input_as_handled()
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if player:
+				player._cycle_nearby(1)
+			get_viewport().set_input_as_handled()
+			return
+	if event.is_action_pressed("toggle_bag"):
+		_toggle_bag()
+		get_viewport().set_input_as_handled()
+		return
 	if not OS.is_debug_build():
 		return
 	## 调试验收快捷键（避开编辑器 F5–F8）
@@ -269,6 +292,8 @@ func _spawn_player() -> void:
 		player.hp_changed.emit(player.hp, player.max_hp)
 	player.died.connect(_on_player_died)
 	player.toast.connect(_on_toast)
+	if not player.rune_replace_requested.is_connected(_on_rune_replace_requested):
+		player.rune_replace_requested.connect(_on_rune_replace_requested)
 	_reveal_room(start)
 	_current_room_id = start.id
 
@@ -318,6 +343,37 @@ func _spawn_room_contents() -> void:
 			if room.room_type == RoomData.TYPE_RESOURCE or room.room_type == RoomData.TYPE_COMBAT:
 				_spawn_distress(room)
 				break
+	## 第 4 层等：若未刷出撤离信标则强制补一个
+	_ensure_extract_spawned()
+
+
+func _ensure_extract_spawned() -> void:
+	for c in entities.get_children():
+		if c.has_signal("extract_requested"):
+			return
+	var start = null
+	var target = null
+	for r in rooms:
+		if r.room_type == RoomData.TYPE_START:
+			start = r
+		if r.room_type == RoomData.TYPE_EXTRACT:
+			target = r
+	if target == null:
+		for r in rooms:
+			if r == start:
+				continue
+			if target == null or _manhattan_room(r, start) > _manhattan_room(target, start):
+				target = r
+		if target != null:
+			target.room_type = RoomData.TYPE_EXTRACT
+	if target != null:
+		_spawn_extract(target)
+
+
+func _manhattan_room(a, b) -> int:
+	if a == null or b == null:
+		return 0
+	return absi(a.grid.x - b.grid.x) + absi(a.grid.y - b.grid.y)
 
 
 func _spawn_enemies(room, count: int, hp: float, rune_chance: float = 0.35) -> void:
@@ -402,17 +458,132 @@ func _reveal_room(room) -> void:
 
 func _setup_hud() -> void:
 	hud.get_node("HintLabel").text = Loc.t("hint.pit_floor")
+	if hud.has_node("BagBtn"):
+		hud.get_node("BagBtn").text = Loc.t("hud.bag_btn")
+	if player and player.inventory and not player.inventory.changed.is_connected(_on_inventory_changed):
+		player.inventory.changed.connect(_on_inventory_changed)
+	if player and player.runes and not player.runes.changed.is_connected(_on_runes_changed):
+		player.runes.changed.connect(_on_runes_changed)
+	_refresh_bag_grid()
 	_update_hud()
+
+
+func _on_inventory_changed() -> void:
+	_refresh_bag_grid()
+	_update_hud()
+
+
+func _on_runes_changed() -> void:
+	_update_hud()
+
+
+func _refresh_bag_grid() -> void:
+	if player == null:
+		return
+	var grid_path := "BagPanel/BagGrid"
+	if not hud.has_node(grid_path):
+		return
+	var grid = hud.get_node(grid_path)
+	if grid.has_method("set_inventory_entries"):
+		grid.set_inventory_entries(player.inventory.slots)
+
+
+func _wire_bag_ui() -> void:
+	if hud.has_node("BagBtn") and not hud.get_node("BagBtn").pressed.is_connected(_toggle_bag):
+		hud.get_node("BagBtn").pressed.connect(_toggle_bag)
+	if hud.has_node("BagPanel/CloseBtn"):
+		var close: Button = hud.get_node("BagPanel/CloseBtn")
+		close.text = Loc.t("hud.bag_close")
+		if not close.pressed.is_connected(_close_bag):
+			close.pressed.connect(_close_bag)
+	if hud.has_node("BagPanel/Title"):
+		hud.get_node("BagPanel/Title").text = Loc.t("hud.bag_title")
+	if hud.has_node("BagPanel/BagGrid"):
+		var grid = hud.get_node("BagPanel/BagGrid")
+		if grid.has_signal("slot_hovered") and not grid.slot_hovered.is_connected(_on_bag_hover):
+			grid.slot_hovered.connect(_on_bag_hover)
+
+
+func _toggle_bag() -> void:
+	_bag_open = not _bag_open
+	if hud.has_node("BagPanel"):
+		hud.get_node("BagPanel").visible = _bag_open
+	if _bag_open:
+		_refresh_bag_grid()
+		if hud.has_node("BagPanel/Tooltip"):
+			hud.get_node("BagPanel/Tooltip").text = ""
+
+
+func _close_bag() -> void:
+	_bag_open = false
+	if hud.has_node("BagPanel"):
+		hud.get_node("BagPanel").visible = false
+
+
+func _on_bag_hover(_index: int, tip: String) -> void:
+	if hud.has_node("BagPanel/Tooltip"):
+		hud.get_node("BagPanel/Tooltip").text = tip
+
+
+func _wire_rune_replace_ui() -> void:
+	if hud.has_node("RuneReplace/CancelBtn"):
+		var btn: Button = hud.get_node("RuneReplace/CancelBtn")
+		if not btn.pressed.is_connected(_cancel_rune_replace):
+			btn.pressed.connect(_cancel_rune_replace)
+	if hud.has_node("RuneReplace/Title"):
+		hud.get_node("RuneReplace/Title").text = Loc.t("rune.replace_title")
+
+
+func _on_rune_replace_requested(rune_id: String, candidates: Array) -> void:
+	if not hud.has_node("RuneReplace"):
+		return
+	var panel: Panel = hud.get_node("RuneReplace")
+	panel.visible = true
+	if hud.has_node("RuneReplace/Hint"):
+		hud.get_node("RuneReplace/Hint").text = Loc.t("rune.replace_hint") + " → " + Loc.t("rune.%s" % rune_id)
+	var list: VBoxContainer = hud.get_node("RuneReplace/List")
+	for c in list.get_children():
+		c.queue_free()
+	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+	for cid in candidates:
+		var id_str := str(cid)
+		var b := Button.new()
+		var rank: int = int(player.runes.get_rank(id_str))
+		var effect_key := "rune.%s.effect" % id_str
+		var effect := Loc.t(effect_key) if Loc.has_key(effect_key) else ""
+		b.text = "%s %d阶 — %s" % [RuneCatalog.display_name(id_str), rank, effect]
+		var captured := id_str
+		b.pressed.connect(func(): _confirm_rune_replace(captured))
+		list.add_child(b)
+
+
+func _confirm_rune_replace(old_id: String) -> void:
+	if player:
+		player.confirm_rune_replace(old_id)
+	if hud.has_node("RuneReplace"):
+		hud.get_node("RuneReplace").visible = false
+
+
+func _cancel_rune_replace() -> void:
+	if player:
+		player.cancel_rune_replace()
+	if hud.has_node("RuneReplace"):
+		hud.get_node("RuneReplace").visible = false
 
 
 func _update_hud() -> void:
 	if player == null:
 		return
-	hud.get_node("HpLabel").text = Loc.t("hud.hp", [int(player.hp), int(player.max_hp)])
-	hud.get_node("BagLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.MAX_SLOTS])
+	if hud.has_node("HpBarBg/HpBarFill"):
+		var fill: ColorRect = hud.get_node("HpBarBg/HpBarFill")
+		var bg: ColorRect = hud.get_node("HpBarBg")
+		var ratio := clampf(player.hp / player.max_hp, 0.0, 1.0) if player.max_hp > 0.0 else 0.0
+		fill.size.x = bg.size.x * ratio
+	if hud.has_node("BagCountLabel"):
+		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.MAX_SLOTS])
 	var rune_lines: PackedStringArray = player.runes.describe()
-	var rune_text := Loc.t("hud.runes") + "："
-	rune_text += "无" if rune_lines.is_empty() else ", ".join(rune_lines)
+	var rune_text := Loc.t("hud.runes") + "：\n"
+	rune_text += Loc.t("hud.runes_none") if rune_lines.is_empty() else "\n".join(rune_lines)
 	hud.get_node("RuneLabel").text = rune_text
 	hud.get_node("PromptLabel").text = player.get_interact_prompt()
 	if hud.has_node("FloorLabel"):
@@ -472,12 +643,10 @@ func _wire_death_ui() -> void:
 	_death_wired = true
 	death_ui.get_node("Panel/ConfirmButton").text = Loc.t("extract.confirm_keep")
 	death_ui.get_node("Panel/ConfirmButton").pressed.connect(_confirm_death_keep)
-	for i in 12:
-		var path := "Panel/Slots/Slot%d" % i
-		if death_ui.has_node(path):
-			var btn: Button = death_ui.get_node(path)
-			var idx := i
-			btn.pressed.connect(func(): _select_death_slot(idx))
+	if death_ui.has_node("Panel/DeathGrid"):
+		var grid = death_ui.get_node("Panel/DeathGrid")
+		if grid.has_signal("slot_pressed"):
+			grid.slot_pressed.connect(_select_death_slot)
 
 
 func _show_death_keep() -> void:
@@ -490,25 +659,18 @@ func _show_death_keep() -> void:
 	death_ui.get_node("Panel/Title").text = Loc.t("extract.fail_title")
 	death_ui.get_node("Panel/Hint").text = Loc.t("extract.keep_one")
 	_death_selected = -1
-	for i in 12:
-		var path := "Panel/Slots/Slot%d" % i
-		if not death_ui.has_node(path):
-			continue
-		var btn: Button = death_ui.get_node(path)
-		if i < player.inventory.slots.size():
-			btn.visible = true
-			btn.text = player.inventory.describe_slot(i)
-			btn.disabled = false
-		else:
-			btn.visible = false
+	if death_ui.has_node("Panel/DeathGrid"):
+		var grid = death_ui.get_node("Panel/DeathGrid")
+		if grid.has_method("set_inventory_entries"):
+			grid.set_inventory_entries(player.inventory.slots)
 
 
 func _select_death_slot(idx: int) -> void:
 	_death_selected = idx
-	for i in 12:
-		var path := "Panel/Slots/Slot%d" % i
-		if death_ui.has_node(path):
-			death_ui.get_node(path).modulate = Color(1.2, 1.1, 0.6) if i == idx else Color.WHITE
+	if death_ui.has_node("Panel/DeathGrid"):
+		var grid = death_ui.get_node("Panel/DeathGrid")
+		if grid.has_method("select_slot"):
+			grid.select_slot(idx)
 
 
 func _confirm_death_keep() -> void:

@@ -8,17 +8,12 @@ signal facility_used(facility_id: String, by: Node)
 func _ready() -> void:
 	super._ready()
 	once = false
-	match facility_id:
-		"board":
-			prompt_key = "hud.interact_board"
-		"alchemy":
-			prompt_key = "hud.interact_alchemy"
-		"quiet":
-			prompt_key = "hud.interact_quiet"
-		"pit":
-			prompt_key = "hud.interact_pit"
-		"stash":
-			prompt_key = "hud.interact_stash"
+	prompt_key = "hud.interact_e"
+
+
+func get_prompt() -> String:
+	var name_key := "facility.%s" % facility_id
+	return Loc.t("hud.interact_e", [Loc.t(name_key)])
 
 
 func _on_interact(by: Node) -> void:

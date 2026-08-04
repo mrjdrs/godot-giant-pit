@@ -5,6 +5,7 @@ const RoomDataScript = preload("res://scripts/pit/room_data.gd")
 const TILE := 32
 const ROOM_TILES := Vector2i(11, 9)
 const ROOM_GAP := Vector2i(3, 3)
+const DIRS: Array = [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]
 
 
 static func generate(p_seed: int = 0, floor_index: int = 1) -> Array:
@@ -14,19 +15,8 @@ static func generate(p_seed: int = 0, floor_index: int = 1) -> Array:
 	else:
 		rng.seed = p_seed + floor_index * 9973
 
-	var candidates: Array = []
-	for y in 3:
-		for x in 3:
-			candidates.append(Vector2i(x, y))
-	candidates.shuffle()
-
-	var selected: Array = [Vector2i(1, 1)]
-	for c in candidates:
-		if c == Vector2i(1, 1):
-			continue
-		selected.append(c)
-		if selected.size() >= 6:
-			break
+	## 从中心生长，保证正交连通
+	var selected: Array = _pick_connected_rooms(rng, 6)
 
 	var rooms: Array = []
 	var index_of: Dictionary = {}
@@ -39,9 +29,8 @@ static func generate(p_seed: int = 0, floor_index: int = 1) -> Array:
 		rooms.append(room)
 		index_of[g] = i
 
-	var dirs: Array = [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]
 	for room in rooms:
-		for d in dirs:
+		for d in DIRS:
 			var ng: Vector2i = room.grid + d
 			if index_of.has(ng):
 				var other_id: int = int(index_of[ng])
@@ -54,24 +43,29 @@ static func generate(p_seed: int = 0, floor_index: int = 1) -> Array:
 	start.room_type = RoomDataScript.TYPE_START
 	start.explored = true
 
-	## 撤离点：深层选更远的房间
+	## 仅在从 start 可达的房间中选撤离 / 下潜
+	var reachable: Array = _reachable_from(start, rooms)
 	var extract = null
-	for r in order:
+	for r in reachable:
 		if r == start:
 			continue
 		if extract == null or _manhattan(r.grid, start.grid) > _manhattan(extract.grid, start.grid):
 			extract = r
+	if extract == null:
+		## 兜底：任选非入口
+		for r in rooms:
+			if r != start:
+				extract = r
+				break
 	extract.room_type = RoomDataScript.TYPE_EXTRACT
 
 	var descent = null
 	if floor_index < 4:
-		for r in order:
+		for r in reachable:
 			if r == start or r == extract:
 				continue
 			if descent == null or _manhattan(r.grid, start.grid) >= _manhattan(descent.grid, start.grid):
-				## 下潜与撤离分房；尽量另选一间
-				if r != extract:
-					descent = r
+				descent = r
 		if descent != null:
 			descent.room_type = RoomDataScript.TYPE_DESCENT
 
@@ -87,7 +81,74 @@ static func generate(p_seed: int = 0, floor_index: int = 1) -> Array:
 		else:
 			r.room_type = RoomDataScript.TYPE_COMBAT
 
+	## 兜底：任意层（含第 4 层）必须有且仅有一个撤离房
+	_ensure_extract(rooms, start)
 	return rooms
+
+
+static func _ensure_extract(rooms: Array, start) -> void:
+	var extract = null
+	for r in rooms:
+		if r.room_type == RoomDataScript.TYPE_EXTRACT:
+			extract = r
+			break
+	if extract != null:
+		return
+	var best = null
+	for r in rooms:
+		if r == start:
+			continue
+		if best == null or _manhattan(r.grid, start.grid) > _manhattan(best.grid, start.grid):
+			best = r
+	if best == null and rooms.size() > 0:
+		best = rooms[0]
+	if best != null:
+		best.room_type = RoomDataScript.TYPE_EXTRACT
+
+
+## 在 3×3 上从中心生长 count 个正交连通房间
+static func _pick_connected_rooms(rng: RandomNumberGenerator, count: int) -> Array:
+	var selected: Dictionary = {} ## Vector2i -> true
+	var center := Vector2i(1, 1)
+	selected[center] = true
+	while selected.size() < count:
+		var frontier: Array = []
+		for g in selected.keys():
+			for d in DIRS:
+				var ng: Vector2i = g + d
+				if ng.x < 0 or ng.x > 2 or ng.y < 0 or ng.y > 2:
+					continue
+				if selected.has(ng):
+					continue
+				frontier.append(ng)
+		if frontier.is_empty():
+			break
+		var pick: Vector2i = frontier[rng.randi_range(0, frontier.size() - 1)]
+		selected[pick] = true
+	var out: Array = []
+	for g in selected.keys():
+		out.append(g)
+	return out
+
+
+static func _reachable_from(start, rooms: Array) -> Array:
+	var by_id: Dictionary = {}
+	for r in rooms:
+		by_id[r.id] = r
+	var seen: Dictionary = {}
+	var queue: Array = [start]
+	seen[start.id] = true
+	var out: Array = []
+	while not queue.is_empty():
+		var cur = queue.pop_front()
+		out.append(cur)
+		for oid in cur.connections:
+			if seen.has(oid):
+				continue
+			seen[oid] = true
+			if by_id.has(oid):
+				queue.append(by_id[oid])
+	return out
 
 
 static func _grid_to_rect(g: Vector2i) -> Rect2:

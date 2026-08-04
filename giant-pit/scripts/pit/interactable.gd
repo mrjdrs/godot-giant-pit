@@ -50,3 +50,7 @@ func _on_body_entered(body: Node) -> void:
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("player") and body.has_method("clear_nearby_interactable"):
 		body.clear_nearby_interactable(self)
+
+
+func set_focus_highlight(on: bool) -> void:
+	modulate = Color(1.35, 1.25, 0.7, 1) if on else Color.WHITE
