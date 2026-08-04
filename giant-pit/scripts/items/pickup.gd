@@ -66,11 +66,15 @@ func _on_interact(by: Node) -> void:
 	if drop_type == DropType.MATERIAL:
 		if by.has_method("try_add_material") and by.try_add_material(drop_id, drop_count):
 			if by.has_method("show_toast"):
-				by.show_toast(Loc.t("pickup.mat", [MaterialCatalog.display_name(drop_id), drop_count]))
+				by.show_toast(
+					Loc.t("pickup.mat", [MaterialCatalog.display_with_tier(drop_id), drop_count]),
+					PitEventLog.Category.PICKUP,
+					MaterialCatalog.tier_color(drop_id)
+				)
 			AudioManager.sfx_pickup()
 			queue_free()
 		elif by.has_method("show_toast"):
-			by.show_toast(Loc.t("bag.full"))
+			by.show_toast(Loc.t("bag.full"), PitEventLog.Category.WARN)
 	elif drop_type == DropType.RUNE:
 		if not by.has_method("try_add_rune"):
 			return
@@ -78,16 +82,24 @@ func _on_interact(by: Node) -> void:
 		var rune_name := RuneCatalog.display_name(drop_id)
 		if result == "ok":
 			if by.has_method("show_toast"):
-				by.show_toast(Loc.t("pickup.rune", [rune_name]))
+				by.show_toast(
+					Loc.t("pickup.rune", [RuneCatalog.display_with_tier(drop_id)]),
+					PitEventLog.Category.RUNE,
+					RuneCatalog.tier_color(drop_id)
+				)
 			AudioManager.sfx_pickup()
 			queue_free()
 		elif result == "upgraded":
 			if by.has_method("show_toast"):
-				by.show_toast(Loc.t("rune.upgraded", [rune_name, by.runes.get_rank(drop_id)]))
+				by.show_toast(
+					Loc.t("rune.upgraded", [rune_name, by.runes.get_rank(drop_id)]),
+					PitEventLog.Category.RUNE,
+					RuneCatalog.tier_color(drop_id)
+				)
 			AudioManager.sfx_pickup()
 			queue_free()
 		elif result == "full" or result == "max_rank":
 			if by.has_method("request_rune_replace"):
 				by.request_rune_replace(self, drop_id)
 			elif by.has_method("show_toast"):
-				by.show_toast(Loc.t("rune.slots_full"))
+				by.show_toast(Loc.t("rune.slots_full"), PitEventLog.Category.WARN)

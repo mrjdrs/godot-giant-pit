@@ -12,11 +12,18 @@ signal changed
 
 var mind_level: int = 1
 var mind_shards_banked: int = 0 ## 静室待吸收也可直接扣 stash
+var mind_value: int = 0 ## 可消耗念力值（传送）
 var gold: int = 0
 var stash: Dictionary = {} ## mat_id -> count
 var equipment: Dictionary = {}
 var active_quest_id: String = ""
 var intel: PackedStringArray = []
+var unlocked_warps: Array = [] ## ["warp_a", ...]
+
+const WARP_COST_ENTER := 15
+const WARP_COST_TRAVEL := 10
+const SHARD_TO_VALUE := 5
+const CORE_TO_VALUE := 25
 
 
 func _ready() -> void:
@@ -134,6 +141,61 @@ func try_absorb_mind() -> String:
 	return "ok"
 
 
+func try_convert_to_mind_value(prefer_core: bool = false) -> String:
+	## 转化 1 份材料为念力值
+	if prefer_core:
+		if stash_count("mind_core") >= 1:
+			if not consume_stash({"mind_core": 1}):
+				return "no_mats"
+			mind_value += CORE_TO_VALUE
+			changed.emit()
+			save_game()
+			return "ok"
+		return "no_mats"
+	if stash_count("mind_shard") >= 1:
+		if not consume_stash({"mind_shard": 1}):
+			return "no_mats"
+		mind_value += SHARD_TO_VALUE
+		changed.emit()
+		save_game()
+		return "ok"
+	if stash_count("mind_core") >= 1:
+		if not consume_stash({"mind_core": 1}):
+			return "no_mats"
+		mind_value += CORE_TO_VALUE
+		changed.emit()
+		save_game()
+		return "ok"
+	return "no_mats"
+
+
+func can_afford_mind(n: int) -> bool:
+	return mind_value >= n
+
+
+func consume_mind_value(n: int) -> bool:
+	if n <= 0:
+		return true
+	if mind_value < n:
+		return false
+	mind_value -= n
+	changed.emit()
+	save_game()
+	return true
+
+
+func is_warp_unlocked(warp_id: String) -> bool:
+	return unlocked_warps.has(warp_id)
+
+
+func unlock_warp(warp_id: String) -> void:
+	if warp_id == "" or unlocked_warps.has(warp_id):
+		return
+	unlocked_warps.append(warp_id)
+	changed.emit()
+	save_game()
+
+
 func accept_quest(quest_id: String) -> String:
 	if active_quest_id != "":
 		return "busy"
@@ -216,21 +278,27 @@ func describe_stash() -> PackedStringArray:
 func to_dict() -> Dictionary:
 	return {
 		"mind_level": mind_level,
+		"mind_value": mind_value,
 		"gold": gold,
 		"stash": stash,
 		"equipment": equipment,
 		"active_quest_id": active_quest_id,
 		"intel": Array(intel),
+		"unlocked_warps": unlocked_warps.duplicate(),
 	}
 
 
 func from_dict(data: Dictionary) -> void:
 	mind_level = int(data.get("mind_level", 1))
+	mind_value = int(data.get("mind_value", 0))
 	gold = int(data.get("gold", 0))
 	stash = data.get("stash", {})
 	equipment = data.get("equipment", {})
 	active_quest_id = str(data.get("active_quest_id", ""))
 	intel = PackedStringArray(data.get("intel", []))
+	unlocked_warps = data.get("unlocked_warps", [])
+	if typeof(unlocked_warps) != TYPE_ARRAY:
+		unlocked_warps = []
 	_ensure_equipment()
 
 
@@ -246,7 +314,8 @@ func load_game() -> void:
 		_ensure_equipment()
 		## 新手赠礼，方便阶段 C 试玩
 		if stash.is_empty():
-			stash = {"mind_shard": 2, "alchem_slag": 4, "beast_scale": 3, "glow_moss": 2}
+			stash = {"mind_shard": 4, "mind_core": 1, "alchem_slag": 4, "beast_scale": 3, "glow_moss": 2}
+			mind_value = 20
 		return
 	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if f == null:

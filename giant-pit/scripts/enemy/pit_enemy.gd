@@ -1,7 +1,9 @@
 extends CharacterBody2D
-## 阶段 B 简易近战敌人（坑蛆）。
+## 分区杂兵 / 精英 / 看守 / BOSS。
 
 const PickupScene = preload("res://scenes/items/pickup.tscn")
+
+signal died_with_id(enemy_id: String, meta: Dictionary)
 
 @export var max_hp: float = 30.0
 @export var move_speed: float = 70.0
@@ -10,6 +12,10 @@ const PickupScene = preload("res://scenes/items/pickup.tscn")
 @export var aggro_range: float = 160.0
 @export var drop_mat_id: String = "beast_scale"
 @export var drop_rune_chance: float = 0.35
+@export var enemy_id: String = "grub"
+@export var is_boss: bool = false
+@export var warp_unlock_id: String = "" ## 看守绑定的传送点
+@export var quest_scale: bool = false
 
 @onready var sprite: Sprite2D = $Sprite
 @onready var hurtbox: Area2D = $Hurtbox
@@ -28,14 +34,50 @@ const HP_BAR_W := 28.0
 const HP_BAR_H := 4.0
 
 
+func configure(def: Dictionary) -> void:
+	enemy_id = str(def.get("id", enemy_id))
+	max_hp = float(def.get("hp", max_hp))
+	contact_damage = float(def.get("dmg", contact_damage))
+	drop_mat_id = str(def.get("drop", drop_mat_id))
+	drop_rune_chance = float(def.get("rune", drop_rune_chance))
+	quest_scale = bool(def.get("quest_scale", false))
+	warp_unlock_id = str(def.get("warp", ""))
+	is_boss = bool(def.get("is_boss", false))
+	hp = max_hp
+	if is_node_ready():
+		_apply_icon(str(def.get("icon", "")))
+		_update_hp_label()
+	else:
+		set_meta("_pending_icon", str(def.get("icon", "")))
+
+
+func _apply_icon(path: String) -> void:
+	if path == "" or sprite == null:
+		return
+	if ResourceLoader.exists(path):
+		sprite.texture = load(path)
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+
 func _ready() -> void:
 	hp = max_hp
 	collision_layer = 4
 	collision_mask = 1
 	add_to_group("enemy")
+	if quest_scale:
+		add_to_group("scale_rock")
+	if warp_unlock_id != "":
+		add_to_group("warp_guard")
+	if is_boss:
+		add_to_group("floor_boss")
+		aggro_range = 220.0
+		move_speed = 55.0
 	hurtbox.configure_layers(16)
 	hurtbox.hurt.connect(_on_hurt)
 	_setup_hp_bar()
+	if has_meta("_pending_icon"):
+		_apply_icon(str(get_meta("_pending_icon")))
+		remove_meta("_pending_icon")
 	_update_hp_label()
 	call_deferred("_find_player")
 
@@ -132,8 +174,17 @@ func _on_hurt(hitbox: Area2D) -> void:
 
 
 func _die() -> void:
-	if is_in_group("scale_rock"):
+	if quest_scale or is_in_group("scale_rock"):
 		RunSession.kill_scale += 1
+	if is_boss:
+		RunSession.grant_special_mind()
+	var meta := {"warp": warp_unlock_id, "is_boss": is_boss}
+	died_with_id.emit(enemy_id, meta)
+	if warp_unlock_id != "":
+		## 通知场景激活传送点
+		var tree := get_tree()
+		if tree != null:
+			tree.call_group("pit_floor", "on_warp_guard_killed", warp_unlock_id)
 	_spawn_drops()
 	queue_free()
 

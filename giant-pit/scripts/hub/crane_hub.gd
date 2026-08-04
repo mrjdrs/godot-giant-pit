@@ -121,8 +121,9 @@ func _spawn_player() -> void:
 
 
 func _refresh_status() -> void:
-	hud.get_node("StatusLabel").text = "%s | %s | %s" % [
+	hud.get_node("StatusLabel").text = "%s | %s | %s | %s" % [
 		Loc.t("hud.mind", [MetaProgress.mind_level]),
+		Loc.t("hud.mind_value", [MetaProgress.mind_value]),
 		Loc.t("hud.gold", [MetaProgress.gold]),
 		_quest_status_text(),
 	]
@@ -219,6 +220,9 @@ func _open_quiet() -> void:
 	var cost := MindTable.cost_to_next(lvl)
 	var lines: PackedStringArray = []
 	lines.append(Loc.t("hub.quiet_hint", [lvl, cost]))
+	lines.append(Loc.t("hub.mind_value_line", [
+		MetaProgress.mind_value, MetaProgress.SHARD_TO_VALUE, MetaProgress.CORE_TO_VALUE
+	]))
 	lines.append(_weight_line(lvl, "hub.quiet_weights"))
 	if lvl < 5:
 		lines.append(_weight_line(lvl + 1, "hub.quiet_effect"))
@@ -227,7 +231,31 @@ func _open_quiet() -> void:
 	panel_body.text = "\n".join(lines)
 	btn_a.text = Loc.t("hub.quiet_do")
 	btn_a.visible = lvl < 5
-	btn_b.visible = false
+	btn_b.text = Loc.t("hub.quiet_convert")
+	btn_b.visible = true
+	btn_c.visible = false
+
+
+func _open_pit() -> void:
+	_mode = "pit"
+	_show_text_panel()
+	panel_title.text = Loc.t("facility.pit")
+	var lines: PackedStringArray = []
+	lines.append(Loc.t("hub.enter_pit"))
+	lines.append(Loc.t("hud.mind_value", [MetaProgress.mind_value]))
+	if MetaProgress.unlocked_warps.is_empty():
+		lines.append(Loc.t("hub.warp_locked_none"))
+	else:
+		lines.append(Loc.t("hub.enter_warp_need"))
+		for wid in MetaProgress.unlocked_warps:
+			lines.append(" · " + Loc.t("hub.warp_option", [Loc.t("warp.%s" % wid)]))
+	panel_body.text = "\n".join(lines)
+	btn_a.text = Loc.t("hub.enter")
+	btn_a.visible = true
+	var can_warp := not MetaProgress.unlocked_warps.is_empty() and MetaProgress.can_afford_mind(MetaProgress.WARP_COST_ENTER)
+	btn_b.text = Loc.t("hub.enter_warp", [MetaProgress.WARP_COST_ENTER])
+	btn_b.visible = not MetaProgress.unlocked_warps.is_empty()
+	btn_b.disabled = not can_warp
 	btn_c.visible = false
 
 
@@ -305,17 +333,7 @@ func _show_text_panel() -> void:
 	panel_body.offset_bottom = 280.0
 	if panel.has_node("Tooltip"):
 		panel.get_node("Tooltip").text = ""
-
-
-func _open_pit() -> void:
-	_mode = "pit"
-	_show_text_panel()
-	panel_title.text = Loc.t("hub.enter")
-	panel_body.text = Loc.t("hub.enter_pit")
-	btn_a.text = Loc.t("hub.enter")
-	btn_a.visible = true
-	btn_b.visible = false
-	btn_c.visible = false
+	btn_b.disabled = false
 
 
 func _on_btn_a() -> void:
@@ -340,7 +358,7 @@ func _on_btn_a() -> void:
 		"alchemy":
 			_craft(Equipment.SLOT_CHEST)
 		"pit":
-			_enter_pit()
+			_enter_pit("")
 
 
 func _on_btn_b() -> void:
@@ -349,6 +367,16 @@ func _on_btn_b() -> void:
 			_accept_quest_index(1)
 		"alchemy":
 			_craft(Equipment.SLOT_AMULET)
+		"quiet":
+			var before := MetaProgress.mind_value
+			var cr := MetaProgress.try_convert_to_mind_value(false)
+			if cr == "ok":
+				_toast(Loc.t("hub.quiet_convert_ok", [MetaProgress.mind_value - before, MetaProgress.mind_value]))
+			else:
+				_toast(Loc.t("hub.quiet_no"))
+			_open_quiet()
+		"pit":
+			_enter_pit_via_warp()
 
 
 func _on_btn_c() -> void:
@@ -399,9 +427,24 @@ func _upgrade_any() -> void:
 	_open_alchemy()
 
 
-func _enter_pit() -> void:
-	RunSession.begin_run()
+func _enter_pit(spawn_id: String = "") -> void:
+	RunSession.begin_run(spawn_id)
 	get_tree().change_scene_to_file("res://scenes/pit/pit_floor_01.tscn")
+
+
+func _enter_pit_via_warp() -> void:
+	if MetaProgress.unlocked_warps.is_empty():
+		_toast(Loc.t("hub.warp_locked_none"))
+		return
+	if not MetaProgress.can_afford_mind(MetaProgress.WARP_COST_ENTER):
+		_toast(Loc.t("warp.no_mind"))
+		return
+	## 默认选第一个已解锁；后续可做列表
+	var wid := str(MetaProgress.unlocked_warps[0])
+	if not MetaProgress.consume_mind_value(MetaProgress.WARP_COST_ENTER):
+		_toast(Loc.t("warp.no_mind"))
+		return
+	_enter_pit(wid)
 
 
 func _close_panel() -> void:

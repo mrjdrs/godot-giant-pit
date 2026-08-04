@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/pit/descent_beacon.gd" id="1"]
-[ext_resource type="Texture2D" path="res://assets/tiles/pit_props/prop_descent.png" id="2"]
+[ext_resource type="Texture2D" path="res://assets/props/descent/prop_descent_locked.png" id="2"]
 
 [sub_resource type="CircleShape2D" id="c"]
 radius = 16.0

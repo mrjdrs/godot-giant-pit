@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/pit/extract_beacon.gd" id="1_script"]
-[ext_resource type="Texture2D" path="res://assets/tiles/pit_props/prop_extract.png" id="2_tex"]
+[ext_resource type="Texture2D" path="res://assets/props/extract/prop_extract.png" id="2_tex"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ext"]
 radius = 16.0

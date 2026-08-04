@@ -33,12 +33,17 @@ func _on_interact(by: Node) -> void:
 		if by.has_method("try_add_material"):
 			var ok: bool = by.try_add_material(content_id, content_count)
 			if ok:
-				_toast(by, Loc.t("pickup.mat", [MaterialCatalog.display_name(content_id), content_count]))
+				_toast(
+					by,
+					Loc.t("pickup.mat", [MaterialCatalog.display_with_tier(content_id), content_count]),
+					PitEventLog.Category.PICKUP,
+					MaterialCatalog.tier_color(content_id)
+				)
 				queue_free()
 			else:
 				_done = false
 				enabled = true
-				_toast(by, Loc.t("bag.full"))
+				_toast(by, Loc.t("bag.full"), PitEventLog.Category.WARN)
 	elif content_type == ContentType.RUNE:
 		if by.has_method("try_add_rune"):
 			var result: String = by.try_add_rune(content_id)
@@ -51,23 +56,30 @@ func _on_interact(by: Node) -> void:
 
 
 func _handle_rune_result(by: Node, result: String) -> void:
-	var rune_name := RuneCatalog.display_name(content_id)
 	match result:
 		"ok":
-			_toast(by, Loc.t("pickup.rune", [rune_name]))
+			_toast(
+				by,
+				Loc.t("pickup.rune", [RuneCatalog.display_with_tier(content_id)]),
+				PitEventLog.Category.RUNE,
+				RuneCatalog.tier_color(content_id)
+			)
 		"upgraded":
 			var rank := 1
 			if by.get("runes") != null:
 				rank = int(by.runes.get_rank(content_id))
-			_toast(by, Loc.t("rune.upgraded", [rune_name, rank]))
+			_toast(
+				by,
+				Loc.t("rune.upgraded", [RuneCatalog.display_name(content_id), rank]),
+				PitEventLog.Category.RUNE,
+				RuneCatalog.tier_color(content_id)
+			)
 		"full":
-			_toast(by, Loc.t("rune.slots_full"))
+			_toast(by, Loc.t("rune.slots_full"), PitEventLog.Category.WARN)
 		_:
 			pass
 
 
-func _toast(by: Node, text: String) -> void:
+func _toast(by: Node, text: String, category: int = PitEventLog.Category.SYSTEM, color: Color = Color.TRANSPARENT) -> void:
 	if by.has_method("show_toast"):
-		by.show_toast(text)
-	else:
-		print(text)
+		by.show_toast(text, category, color)

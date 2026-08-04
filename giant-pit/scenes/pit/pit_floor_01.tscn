@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://ctttoaqe6iaot" path="res://scripts/pit/pit_floor.gd" id="1_script"]
 [ext_resource type="Script" uid="uid://cbxvqfpyuh0me" path="res://scripts/ui/item_slot_grid.gd" id="2_grid"]
 [ext_resource type="Script" uid="uid://bt85ulr7a3ng5" path="res://scripts/ui/minimap.gd" id="3_0o1em"]
+[ext_resource type="Script" path="res://scripts/ui/event_log.gd" id="4_eventlog"]
 
 [node name="PitFloor" type="Node2D" unique_id=1006735463]
 script = ExtResource("1_script")
@@ -17,34 +18,26 @@ script = ExtResource("1_script")
 
 [node name="HUD" type="CanvasLayer" parent="." unique_id=530288728]
 
-[node name="HintLabel" type="Label" parent="HUD" unique_id=134231744]
+[node name="TopLeft" type="VBoxContainer" parent="HUD" unique_id=134231743]
 offset_left = 12.0
 offset_top = 8.0
-offset_right = 900.0
-offset_bottom = 56.0
-theme_override_font_sizes/font_size = 13
-text = "提示"
+offset_right = 560.0
+offset_bottom = 64.0
+theme_override_constants/separation = 8
 
-[node name="FloorLabel" type="Label" parent="HUD" unique_id=404519478]
-offset_left = 12.0
-offset_top = 52.0
-offset_right = 520.0
-offset_bottom = 76.0
+[node name="HintLabel" type="Label" parent="HUD/TopLeft" unique_id=134231744]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.72, 0.74, 0.78, 1)
+theme_override_font_sizes/font_size = 11
+text = "提示"
+autowrap_mode = 3
+
+[node name="FloorLabel" type="Label" parent="HUD/TopLeft" unique_id=404519478]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 14
 text = "层"
-
-[node name="HpBarBg" type="ColorRect" parent="HUD" unique_id=850399434]
-offset_left = 12.0
-offset_top = 80.0
-offset_right = 212.0
-offset_bottom = 96.0
-color = Color(0.2, 0.06, 0.06, 0.95)
-
-[node name="HpBarFill" type="ColorRect" parent="HUD/HpBarBg" unique_id=1222838705]
-layout_mode = 0
-offset_right = 200.0
-offset_bottom = 16.0
-color = Color(0.82, 0.16, 0.14, 1)
 
 [node name="BagBtn" type="Button" parent="HUD" unique_id=1147026993]
 anchors_preset = 1
@@ -68,16 +61,42 @@ theme_override_font_sizes/font_size = 12
 text = "0/12"
 horizontal_alignment = 2
 
-[node name="RuneLabel" type="Label" parent="HUD" unique_id=1172789167]
-offset_left = 12.0
-offset_top = 108.0
-offset_right = 560.0
-offset_bottom = 200.0
-theme_override_font_sizes/font_size = 13
+[node name="RunePanel" type="Panel" parent="HUD" unique_id=1172789167]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -280.0
+offset_top = 116.0
+offset_right = -12.0
+offset_bottom = 248.0
+
+[node name="RuneTitle" type="Label" parent="HUD/RunePanel" unique_id=1172789168]
+layout_mode = 0
+offset_left = 8.0
+offset_top = 4.0
+offset_right = 260.0
+offset_bottom = 24.0
+theme_override_font_sizes/font_size = 12
 text = "符文"
+horizontal_alignment = 2
+
+[node name="RuneScroll" type="ScrollContainer" parent="HUD/RunePanel" unique_id=1172789169]
+layout_mode = 0
+offset_left = 6.0
+offset_top = 24.0
+offset_right = 262.0
+offset_bottom = 126.0
+horizontal_scroll_mode = 0
+
+[node name="RuneLabel" type="Label" parent="HUD/RunePanel/RuneScroll" unique_id=1172789170]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 12
+text = "无"
 autowrap_mode = 3
 
 [node name="RoomLabel" type="Label" parent="HUD" unique_id=1991068662]
+visible = false
 offset_left = 12.0
 offset_top = 208.0
 offset_right = 280.0
@@ -92,24 +111,92 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -260.0
-offset_top = -64.0
+offset_top = -108.0
 offset_right = 260.0
-offset_bottom = -32.0
+offset_bottom = -76.0
 theme_override_colors/font_color = Color(1, 0.92, 0.55, 1)
 theme_override_font_sizes/font_size = 16
 horizontal_alignment = 1
 
-[node name="ToastLabel" type="Label" parent="HUD" unique_id=509898381]
-modulate = Color(1, 1, 1, 0)
-anchors_preset = 5
+[node name="StatsBar" type="VBoxContainer" parent="HUD" unique_id=850399435]
+anchors_preset = 7
 anchor_left = 0.5
+anchor_top = 1.0
 anchor_right = 0.5
-offset_left = -220.0
-offset_top = 72.0
-offset_right = 220.0
-offset_bottom = 104.0
-theme_override_font_sizes/font_size = 15
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -68.0
+offset_right = 200.0
+offset_bottom = -12.0
+theme_override_constants/separation = 4
+alignment = 1
+
+[node name="HpText" type="Label" parent="HUD/StatsBar" unique_id=850399436]
+layout_mode = 2
+theme_override_font_sizes/font_size = 13
+text = "生命"
 horizontal_alignment = 1
+
+[node name="HpBarBg" type="ColorRect" parent="HUD/StatsBar" unique_id=850399434]
+custom_minimum_size = Vector2(280, 16)
+layout_mode = 2
+color = Color(0.2, 0.06, 0.06, 0.95)
+
+[node name="HpBarFill" type="ColorRect" parent="HUD/StatsBar/HpBarBg" unique_id=1222838705]
+layout_mode = 0
+offset_right = 280.0
+offset_bottom = 16.0
+color = Color(0.82, 0.16, 0.14, 1)
+
+[node name="AttrText" type="Label" parent="HUD/StatsBar" unique_id=850399437]
+layout_mode = 2
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.78, 0.84, 0.92, 1)
+text = "念力"
+horizontal_alignment = 1
+
+[node name="EventLog" type="Control" parent="HUD" unique_id=509898382]
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = -280.0
+offset_right = -12.0
+offset_bottom = -152.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("4_eventlog")
+
+[node name="Panel" type="Panel" parent="HUD/EventLog" unique_id=509898383]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Margin" type="MarginContainer" parent="HUD/EventLog/Panel" unique_id=509898384]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/margin_left = 6
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 6
+theme_override_constants/margin_bottom = 4
+
+[node name="List" type="VBoxContainer" parent="HUD/EventLog/Panel/Margin" unique_id=509898385]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+
+[node name="ToastLabel" type="Label" parent="HUD" unique_id=509898381]
+visible = false
 
 [node name="BagPanel" type="Panel" parent="HUD" unique_id=673149646]
 visible = false
@@ -278,6 +365,63 @@ offset_bottom = -12.0
 grow_vertical = 0
 script = ExtResource("3_0o1em")
 
+[node name="WarpPanel" type="Panel" parent="HUD" unique_id=1325529879]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -160.0
+offset_top = -140.0
+offset_right = 160.0
+offset_bottom = 140.0
+
+[node name="Title" type="Label" parent="HUD/WarpPanel" unique_id=328026593]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 10.0
+offset_right = 308.0
+offset_bottom = 36.0
+theme_override_font_sizes/font_size = 18
+text = "传送"
+horizontal_alignment = 1
+
+[node name="Hint" type="Label" parent="HUD/WarpPanel" unique_id=1111920107]
+layout_mode = 0
+offset_left = 16.0
+offset_top = 40.0
+offset_right = 304.0
+offset_bottom = 64.0
+theme_override_font_sizes/font_size = 12
+
+[node name="List" type="VBoxContainer" parent="HUD/WarpPanel" unique_id=978858870]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 72.0
+offset_right = 300.0
+offset_bottom = 200.0
+
+[node name="CloseBtn" type="Button" parent="HUD/WarpPanel" unique_id=1241753924]
+layout_mode = 0
+offset_left = 90.0
+offset_top = 212.0
+offset_right = 230.0
+offset_bottom = 248.0
+text = "关闭"
+
+[node name="RegionBanner" type="Label" parent="HUD" unique_id=2058848467]
+modulate = Color(1, 1, 1, 0)
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -280.0
+offset_top = 40.0
+offset_right = 280.0
+offset_bottom = 100.0
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+
 [node name="ExtractUI" type="CanvasLayer" parent="." unique_id=772330325]
 visible = false
 
@@ -352,7 +496,7 @@ anchor_bottom = 0.5
 offset_left = -260.0
 offset_top = -220.0
 offset_right = 260.0
-offset_bottom = 220.0
+offset_bottom = 260.0
 
 [node name="Title" type="Label" parent="DeathUI/Panel" unique_id=800707688]
 layout_mode = 0
@@ -383,12 +527,21 @@ columns = 4
 script = ExtResource("2_grid")
 selectable = true
 
+[node name="Tooltip" type="Label" parent="DeathUI/Panel" unique_id=242505352]
+layout_mode = 0
+offset_left = 24.0
+offset_top = 328.0
+offset_right = 496.0
+offset_bottom = 392.0
+theme_override_font_sizes/font_size = 13
+autowrap_mode = 3
+
 [node name="ConfirmButton" type="Button" parent="DeathUI/Panel" unique_id=2116494818]
 layout_mode = 0
 offset_left = 160.0
-offset_top = 340.0
+offset_top = 400.0
 offset_right = 360.0
-offset_bottom = 380.0
+offset_bottom = 440.0
 text = "确认带回"
 
 [connection signal="pressed" from="ExtractUI/Panel/RetryButton" to="." method="_on_retry_pressed"]

@@ -6,7 +6,7 @@ const RuneLoadoutScript = preload("res://scripts/player/rune_loadout.gd")
 
 signal hp_changed(current: float, maximum: float)
 signal died
-signal toast(text: String)
+signal toast(text: String, category: int, color: Color)
 signal loadout_changed
 signal inventory_changed
 signal rune_replace_requested(rune_id: String, candidates: Array)
@@ -416,8 +416,8 @@ func get_interact_prompt() -> String:
 	return base
 
 
-func show_toast(text: String) -> void:
-	toast.emit(text)
+func show_toast(text: String, category: int = 3, color: Color = Color.TRANSPARENT) -> void:
+	toast.emit(text, category, color)
 
 
 func request_rune_replace(pickup: Node, rune_id: String) -> void:

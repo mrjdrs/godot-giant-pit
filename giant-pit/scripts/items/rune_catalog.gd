@@ -64,6 +64,22 @@ static func display_name(rune_id: String) -> String:
 	return Loc.t(str(def.get("name_key", rune_id)))
 
 
+static func tier(_rune_id: String) -> int:
+	return ItemTier.Tier.RARE
+
+
+static func tier_label(rune_id: String) -> String:
+	return ItemTier.display_name(tier(rune_id))
+
+
+static func tier_color(_rune_id: String) -> Color:
+	return ItemTier.color_for(tier(_rune_id))
+
+
+static func display_with_tier(rune_id: String) -> String:
+	return Loc.t("item.tier_name", [tier_label(rune_id), display_name(rune_id)])
+
+
 static func is_body(rune_id: String) -> bool:
 	var def: Dictionary = DEFS.get(rune_id, {})
 	return int(def.get("kind", RuneKind.BODY)) == RuneKind.BODY

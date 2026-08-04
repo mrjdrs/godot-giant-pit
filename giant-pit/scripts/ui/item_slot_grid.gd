@@ -95,12 +95,13 @@ func _tooltip_for(index: int) -> String:
 	if t == "rune":
 		var effect_key := "rune.%s.effect" % id
 		var effect := Loc.t(effect_key) if Loc.has_key(effect_key) else ""
-		return "%s\n%s" % [RuneCatalog.display_name(id), effect]
-	var name := MaterialCatalog.display_name(id)
+		var rune_tier := RuneCatalog.tier_label(id)
+		return Loc.t("item.rune_tip", [RuneCatalog.display_name(id), rune_tier, effect])
 	var cnt := int(e.get("count", 1))
 	var desc_key := "mat.%s.desc" % id
 	var desc := Loc.t(desc_key) if Loc.has_key(desc_key) else ""
-	return Loc.t("item.mat_tip", [name, cnt, desc]).strip_edges()
+	var tier_txt := MaterialCatalog.tier_label(id)
+	return Loc.t("item.mat_tip", [MaterialCatalog.display_name(id), tier_txt, cnt, desc]).strip_edges()
 
 
 func clear_all() -> void:

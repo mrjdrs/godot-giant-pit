@@ -1,23 +1,19 @@
 extends Node2D
-## 阶段 C：多层巨坑运行时场景。
+## 第 1 层大地图运行时：三区域 + 迷雾 + 传送/精英/BOSS。
 
-const PitGenerator = preload("res://scripts/pit/pit_generator.gd")
-const RoomData = preload("res://scripts/pit/room_data.gd")
-const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+const Floor1Generator = preload("res://scripts/pit/floor1_generator.gd")
+const RegionCatalog = preload("res://scripts/pit/region_catalog.gd")
+const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
-const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 
 const PlayerScene = preload("res://scenes/player/player.tscn")
 const EnemyScene = preload("res://scenes/enemy/pit_enemy.tscn")
-const ScaleRockScene = preload("res://scenes/enemy/scale_rock.tscn")
 const ExtractScene = preload("res://scenes/pit/extract_beacon.tscn")
 const DescentScene = preload("res://scenes/pit/descent_beacon.tscn")
 const DistressScene = preload("res://scenes/pit/distress_beacon.tscn")
 const ResourceScene = preload("res://scenes/pit/resource_node.tscn")
-
-const TILE := 32
-const WALL_THICK := 16.0
+const WarpScene = preload("res://scenes/pit/warp_beacon.tscn")
 
 @onready var world: Node2D = $World
 @onready var rooms_root: Node2D = $World/Rooms
@@ -27,18 +23,25 @@ const WALL_THICK := 16.0
 @onready var extract_ui: CanvasLayer = $ExtractUI
 @onready var death_ui: CanvasLayer = $DeathUI
 
-var rooms: Array = []
 var player: CharacterBody2D = null
-var _fog_by_room: Dictionary = {}
-var _current_room_id: int = -1
+var _map: Dictionary = {}
+var _walkable: Dictionary = {}
+var _region_of: Dictionary = {}
+var _markers: Dictionary = {}
+var _explored_chunks: Dictionary = {} ## Vector2i -> true
+var _fog_chunks: Dictionary = {} ## Vector2i -> ColorRect/Polygon
+var _warps: Dictionary = {} ## warp_id -> node
+var _current_region: String = ""
 var _run_over: bool = false
 var _death_selected: int = -1
 var _death_wired: bool = false
 var _bag_open: bool = false
 var _quest_open: bool = false
+var _warp_menu_from: String = ""
 
 
 func _ready() -> void:
+	add_to_group("pit_floor")
 	if not RunSession.active:
 		RunSession.begin_run()
 	extract_ui.visible = false
@@ -49,6 +52,10 @@ func _ready() -> void:
 		hud.get_node("RuneReplace").visible = false
 	if hud.has_node("QuestPanel"):
 		hud.get_node("QuestPanel").visible = false
+	if hud.has_node("WarpPanel"):
+		hud.get_node("WarpPanel").visible = false
+	if hud.has_node("RegionBanner"):
+		hud.get_node("RegionBanner").modulate.a = 0.0
 	AudioManager.play_bgm()
 	call_deferred("_deferred_boot")
 
@@ -59,6 +66,7 @@ func _deferred_boot() -> void:
 	_wire_bag_ui()
 	_wire_rune_replace_ui()
 	_wire_quest_ui()
+	_wire_warp_ui()
 	extract_ui.get_node("Panel/RetryButton").text = Loc.t("extract.back_hub")
 	extract_ui.get_node("Panel/ArenaButton").visible = false
 
@@ -66,7 +74,7 @@ func _deferred_boot() -> void:
 func _process(_delta: float) -> void:
 	if player == null or _run_over:
 		return
-	_update_room_exploration()
+	_update_exploration()
 	_update_hud()
 
 
@@ -86,378 +94,329 @@ func _input(event: InputEvent) -> void:
 		_toggle_bag()
 		get_viewport().set_input_as_handled()
 		return
-	if not OS.is_debug_build():
-		return
-	## 调试验收快捷键（避开编辑器 F5–F8）
-	if not (event is InputEventKey and event.pressed and not event.echo):
-		return
-	var code: int = event.keycode if event.keycode != 0 else event.physical_keycode
-	match code:
-		KEY_9:
-			if player:
-				_on_descent(player)
-		KEY_0:
-			_finish_success()
-		KEY_MINUS:
-			if player:
-				player.inventory.add_material("deep_red_ore", 2)
-				player.inventory.add_material("glow_moss", 1)
-				player.input_locked = true
-				call_deferred("_show_death_keep")
-		KEY_EQUAL:
-			var cycle := ["", "gather_ore", "kill_scale", "rescue_beacon"]
-			var cur := RunSession.quest_id_snapshot
-			var idx := cycle.find(cur)
-			var next: String = str(cycle[(idx + 1) % cycle.size()])
-			MetaProgress.active_quest_id = next
-			RunSession.quest_id_snapshot = next
-			RunSession.kill_scale = 0
-			RunSession.rescue_done = false
-			call_deferred("_rebuild_floor_safe")
 
 
 func _build_floor_level() -> void:
-	## 首次启动时子节点为空；下潜/重建请走 _rebuild_floor_safe
-	_fog_by_room.clear()
-	_current_room_id = -1
-	rooms = PitGenerator.generate(0, RunSession.floor_index)
-	_build_rooms()
+	_fog_chunks.clear()
+	_explored_chunks.clear()
+	_warps.clear()
+	_current_region = ""
+	_map = Floor1Generator.generate(0)
+	_walkable = _map.get("walkable", {})
+	_region_of = _map.get("region_of", {})
+	_markers = _map.get("markers", {})
+	_build_terrain()
+	_build_chunk_fog()
 	_spawn_player()
-	_spawn_room_contents()
+	_spawn_contents()
 	_setup_hud()
-	## 每层重建都必须重绑小地图，否则会继续画旧层的 explored 状态
 	_setup_minimap()
 
 
-func _queue_clear(node: Node) -> void:
-	for c in node.get_children():
+func _build_terrain() -> void:
+	for c in rooms_root.get_children():
 		c.queue_free()
+	var ground := Node2D.new()
+	ground.name = "Ground"
+	rooms_root.add_child(ground)
+	var walls := Node2D.new()
+	walls.name = "Walls"
+	rooms_root.add_child(walls)
+	var decor := Node2D.new()
+	decor.name = "Decor"
+	rooms_root.add_child(decor)
 
-
-func _rebuild_floor_safe() -> void:
-	_queue_clear(rooms_root)
-	_queue_clear(entities)
-	_queue_clear(fog_root)
-	player = null
-	await get_tree().process_frame
-	_build_floor_level()
-
-
-func _on_descent(_by: Node) -> void:
-	if player == null:
-		return
-	RunSession.snapshot_player(player)
-	if not RunSession.go_next_floor():
-		return
-	_run_over = false
-	call_deferred("_rebuild_floor_safe")
-
-
-func _build_rooms() -> void:
-	for room in rooms:
-		var room_node := Node2D.new()
-		room_node.name = "Room_%d" % room.id
-		room_node.position = room.rect.position
-		rooms_root.add_child(room_node)
-		_paint_floor(room_node, room)
-		_build_walls(room_node, room)
-		_build_fog(room)
-
-
-func _paint_floor(room_node: Node2D, room) -> void:
-	var tex: Texture2D = load("res://assets/tiles/pit_floor/tile_floor_01.png")
-	var deep: Texture2D = load("res://assets/tiles/pit_floor/tile_floor_deep.png")
-	var use_tex := deep if RunSession.floor_index >= 3 or room.room_type == RoomData.TYPE_ELITE or room.room_type == RoomData.TYPE_EXTRACT else tex
-	## 用拉伸地砖代替逐格铺贴，加快生成
-	var s := Sprite2D.new()
-	s.texture = use_tex
-	s.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	s.centered = false
-	s.position = Vector2.ZERO
-	s.scale = room.rect.size / Vector2(float(use_tex.get_width()), float(use_tex.get_height()))
-	s.z_index = -2
-	room_node.add_child(s)
-
-
-func _build_walls(room_node: Node2D, room) -> void:
-	var size: Vector2 = room.rect.size
-	var door_half := 28.0
-	var connected_dirs: Dictionary = {}
-	for other_id in room.connections:
-		var other = rooms[other_id]
-		var delta: Vector2i = other.grid - room.grid
-		connected_dirs[delta] = true
-	_add_wall_segment(room_node, Vector2(size.x * 0.5, 0), Vector2(size.x, WALL_THICK), connected_dirs.has(Vector2i(0, -1)), door_half, true)
-	_add_wall_segment(room_node, Vector2(size.x * 0.5, size.y), Vector2(size.x, WALL_THICK), connected_dirs.has(Vector2i(0, 1)), door_half, true)
-	_add_wall_segment(room_node, Vector2(0, size.y * 0.5), Vector2(WALL_THICK, size.y), connected_dirs.has(Vector2i(-1, 0)), door_half, false)
-	_add_wall_segment(room_node, Vector2(size.x, size.y * 0.5), Vector2(WALL_THICK, size.y), connected_dirs.has(Vector2i(1, 0)), door_half, false)
-	for other_id in room.connections:
-		var other2 = rooms[other_id]
-		if other2.id < room.id:
-			continue
-		_build_corridor(room, other2)
-
-
-func _add_wall_segment(parent: Node2D, center: Vector2, full_size: Vector2, has_door: bool, door_half: float, horizontal: bool) -> void:
-	if not has_door:
-		_make_wall(parent, center, full_size)
-		return
-	if horizontal:
-		var remain := (full_size.x - door_half * 2.0) * 0.5
-		if remain > 4.0:
-			_make_wall(parent, Vector2(center.x - door_half - remain * 0.5, center.y), Vector2(remain, full_size.y))
-			_make_wall(parent, Vector2(center.x + door_half + remain * 0.5, center.y), Vector2(remain, full_size.y))
-	else:
-		var remain_v := (full_size.y - door_half * 2.0) * 0.5
-		if remain_v > 4.0:
-			_make_wall(parent, Vector2(center.x, center.y - door_half - remain_v * 0.5), Vector2(full_size.x, remain_v))
-			_make_wall(parent, Vector2(center.x, center.y + door_half + remain_v * 0.5), Vector2(full_size.x, remain_v))
-
-
-func _make_wall(parent: Node2D, center: Vector2, size: Vector2) -> void:
-	var body := StaticBody2D.new()
-	body.collision_layer = 1
-	body.collision_mask = 0
-	body.position = center
-	var shape := CollisionShape2D.new()
-	var rect := RectangleShape2D.new()
-	rect.size = size
-	shape.shape = rect
-	body.add_child(shape)
-	var visual := Polygon2D.new()
-	visual.color = Color(0.42, 0.325, 0.267, 1)
-	var hx := size.x * 0.5
-	var hy := size.y * 0.5
-	visual.polygon = PackedVector2Array([Vector2(-hx, -hy), Vector2(hx, -hy), Vector2(hx, hy), Vector2(-hx, hy)])
-	body.add_child(visual)
-	parent.add_child(body)
-
-
-func _build_corridor(a, b) -> void:
-	var ac: Vector2 = a.center()
-	var bc: Vector2 = b.center()
-	var mid := (ac + bc) * 0.5
-	var along := bc - ac
-	var horizontal := absf(along.x) > absf(along.y)
-	var corridor := Node2D.new()
-	corridor.z_index = -3
-	rooms_root.add_child(corridor)
-	var tex: Texture2D = load("res://assets/tiles/pit_floor/tile_floor_02.png")
-	if horizontal:
-		var width: float = absf(along.x) - float(a.rect.size.x) * 0.5 - float(b.rect.size.x) * 0.5
+	var tile: int = int(_map.get("tile", 32))
+	## 按区域大块铺地（性能）
+	var bounds: Dictionary = _map.get("region_bounds", {})
+	for rid in bounds.keys():
+		var rect: Rect2i = bounds[rid]
+		var floors: Array = RegionCatalog.FLOOR_TILES.get(rid, RegionCatalog.FLOOR_TILES[RegionCatalog.REGION_A])
+		var tex_path: String = str(floors[0])
+		var tex: Texture2D = load(tex_path)
 		var s := Sprite2D.new()
 		s.texture = tex
 		s.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		s.centered = true
-		s.position = mid
-		s.scale = Vector2(maxf(width, 32.0) / float(tex.get_width()), 32.0 / float(tex.get_height()))
-		corridor.add_child(s)
-		_make_wall(corridor, Vector2(mid.x, mid.y - 24), Vector2(maxf(width, 32.0), 12.0))
-		_make_wall(corridor, Vector2(mid.x, mid.y + 24), Vector2(maxf(width, 32.0), 12.0))
-	else:
-		var height: float = absf(along.y) - float(a.rect.size.y) * 0.5 - float(b.rect.size.y) * 0.5
-		var s2 := Sprite2D.new()
-		s2.texture = tex
-		s2.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		s2.centered = true
-		s2.position = mid
-		s2.scale = Vector2(32.0 / float(tex.get_width()), maxf(height, 32.0) / float(tex.get_height()))
-		corridor.add_child(s2)
-		_make_wall(corridor, Vector2(mid.x - 24, mid.y), Vector2(12.0, maxf(height, 32.0)))
-		_make_wall(corridor, Vector2(mid.x + 24, mid.y), Vector2(12.0, maxf(height, 32.0)))
+		s.centered = false
+		s.position = Vector2(rect.position.x * tile, rect.position.y * tile)
+		s.scale = Vector2(float(rect.size.x * tile) / float(tex.get_width()), float(rect.size.y * tile) / float(tex.get_height()))
+		s.z_index = -3
+		ground.add_child(s)
+		## 装饰点缀
+		var dec_list: Array = RegionCatalog.DECOR.get(rid, [])
+		if not dec_list.is_empty():
+			for i in 6:
+				var dx := rect.position.x + 2 + (i * 3) % maxi(rect.size.x - 4, 1)
+				var dy := rect.position.y + 2 + ((i * 5) % maxi(rect.size.y - 4, 1))
+				var g := Vector2i(dx, dy)
+				if not _walkable.has(g):
+					continue
+				var dtex: Texture2D = load(str(dec_list[i % dec_list.size()]))
+				var ds := Sprite2D.new()
+				ds.texture = dtex
+				ds.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+				ds.position = Vector2((dx + 0.5) * tile, (dy + 0.5) * tile)
+				ds.z_index = -2
+				decor.add_child(ds)
+
+	## 走廊补地
+	var corridor_tex: Texture2D = load("res://assets/tiles/shared/tile_border.png")
+	for g in _walkable.keys():
+		var rid := str(_region_of.get(g, RegionCatalog.REGION_A))
+		if bounds.has(rid):
+			var r: Rect2i = bounds[rid]
+			if r.has_point(g):
+				continue
+		var cs := Sprite2D.new()
+		cs.texture = corridor_tex
+		cs.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		cs.centered = false
+		cs.position = Vector2(g.x * tile, g.y * tile)
+		cs.scale = Vector2(float(tile) / float(corridor_tex.get_width()), float(tile) / float(corridor_tex.get_height()))
+		cs.z_index = -3
+		ground.add_child(cs)
+
+	## 墙：不可走邻接
+	var dirs := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
+	var wall_done: Dictionary = {}
+	for g in _walkable.keys():
+		for d in dirs:
+			var n: Vector2i = g + d
+			if _walkable.has(n):
+				continue
+			if wall_done.has(n):
+				continue
+			wall_done[n] = true
+			var rid2 := str(_region_of.get(g, RegionCatalog.REGION_A))
+			var wpath: String = str(RegionCatalog.WALL_TILES.get(rid2, "res://assets/tiles/pit_wall/tile_wall.png"))
+			_make_wall_tile(walls, n, tile, wpath)
 
 
-func _build_fog(room) -> void:
-	var poly := Polygon2D.new()
-	poly.color = Color(0.05, 0.04, 0.06, 0.92)
-	poly.position = room.rect.position
-	poly.polygon = PackedVector2Array([
-		Vector2(0, 0),
-		Vector2(room.rect.size.x, 0),
-		Vector2(room.rect.size.x, room.rect.size.y),
-		Vector2(0, room.rect.size.y),
-	])
-	poly.z_index = 20
-	poly.visible = not room.explored
-	fog_root.add_child(poly)
-	_fog_by_room[room.id] = poly
+func _make_wall_tile(parent: Node2D, g: Vector2i, tile: int, tex_path: String) -> void:
+	var body := StaticBody2D.new()
+	body.collision_layer = 1
+	body.collision_mask = 0
+	body.position = Vector2((g.x + 0.5) * tile, (g.y + 0.5) * tile)
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(tile, tile)
+	shape.shape = rect
+	body.add_child(shape)
+	var spr := Sprite2D.new()
+	if ResourceLoader.exists(tex_path):
+		spr.texture = load(tex_path)
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	body.add_child(spr)
+	parent.add_child(body)
+
+
+func _build_chunk_fog() -> void:
+	for c in fog_root.get_children():
+		c.queue_free()
+	_fog_chunks.clear()
+	var tile: int = int(_map.get("tile", 32))
+	var chunk: int = int(_map.get("chunk", 8))
+	var seen: Dictionary = {}
+	for g in _walkable.keys():
+		var ck := Floor1Generator.chunk_of_tile(g)
+		if seen.has(ck):
+			continue
+		seen[ck] = true
+		var poly := Polygon2D.new()
+		poly.color = Color(0.04, 0.03, 0.05, 0.92)
+		poly.z_index = 20
+		var origin := Vector2(ck.x * chunk * tile, ck.y * chunk * tile)
+		var sz := float(chunk * tile)
+		poly.position = origin
+		poly.polygon = PackedVector2Array([
+			Vector2(0, 0), Vector2(sz, 0), Vector2(sz, sz), Vector2(0, sz)
+		])
+		fog_root.add_child(poly)
+		_fog_chunks[ck] = poly
 
 
 func _spawn_player() -> void:
-	var start = rooms[0]
-	for r in rooms:
-		if r.room_type == RoomData.TYPE_START:
-			start = r
-			break
 	player = PlayerScene.instantiate()
 	entities.add_child(player)
-	player.global_position = start.center()
+	var spawn_pos: Vector2 = _markers.get("spawn", Vector2(200, 200))
+	var sid := RunSession.spawn_warp_id
+	if sid != "" and _markers.has(sid):
+		spawn_pos = _markers[sid]
+	player.global_position = spawn_pos
 	player.combat_enabled = true
 	player.apply_meta_loadout(RunSession.brand_quality)
-	if RunSession.floor_index > 1:
-		RunSession.apply_to_player(player)
-		player.hp = clampf(player.max_hp * RunSession.carried_hp_ratio, 1.0, player.max_hp)
-		player.hp_changed.emit(player.hp, player.max_hp)
 	player.died.connect(_on_player_died)
 	player.toast.connect(_on_toast)
 	if not player.rune_replace_requested.is_connected(_on_rune_replace_requested):
 		player.rune_replace_requested.connect(_on_rune_replace_requested)
-	_reveal_room(start)
-	_current_room_id = start.id
+	_reveal_around(player.global_position)
 
 
-func _floor_enemy_hp() -> float:
-	return 28.0 + float(RunSession.floor_index - 1) * 12.0
+func _spawn_contents() -> void:
+	## 撤离 / 下层 / BOSS
+	_spawn_extract(_markers.get("extract", Vector2.ZERO))
+	_spawn_descent(_markers.get("descent", Vector2.ZERO))
+	_spawn_boss(_markers.get("boss", Vector2.ZERO))
+
+	for rid in [RegionCatalog.REGION_A, RegionCatalog.REGION_B, RegionCatalog.REGION_C]:
+		_spawn_elite(rid)
+		_spawn_warp_and_guard(rid)
+		_spawn_region_resources(rid)
+		_spawn_region_mobs(rid)
+
+	## 委托相关
+	if RunSession.quest_id_snapshot == "rescue_beacon":
+		_spawn_distress(_markers.get("distress", Vector2.ZERO))
+	if RunSession.quest_id_snapshot == "kill_scale":
+		for p in _markers.get("scale_quest", []):
+			_spawn_enemy_at(p, {
+				"id": "a_scale",
+				"icon": "res://assets/enemies/region_a/enemy_a_scale_rock.png",
+				"hp": 42.0,
+				"dmg": 8.0,
+				"drop": "beast_scale",
+				"rune": 0.4,
+				"quest_scale": true,
+			})
 
 
-func _spawn_room_contents() -> void:
-	var need_scale := RunSession.quest_id_snapshot == "kill_scale" and RunSession.kill_scale < 2
-	var need_rescue := RunSession.quest_id_snapshot == "rescue_beacon" and not RunSession.rescue_done
-	var scale_spawned := 0
-	for room in rooms:
-		match room.room_type:
-			RoomData.TYPE_COMBAT:
-				@warning_ignore("integer_division")
-				var n: int = 1 + RunSession.floor_index / 2
-				_spawn_enemies(room, n, _floor_enemy_hp())
-				if need_scale and scale_spawned < 2 and randf() < 0.7:
-					_spawn_scale(room)
-					scale_spawned += 1
-			RoomData.TYPE_ELITE:
-				_spawn_enemies(room, 1, _floor_enemy_hp() * 2.2, 0.75)
-				_spawn_chest(room)
-			RoomData.TYPE_RESOURCE:
-				_spawn_resource(room, "glow_moss", "hud.interact_forage", "res://assets/tiles/pit_props/prop_forage.png")
-				var ore := "deep_red_ore" if RunSession.floor_index <= 2 else "copper_vein"
-				_spawn_resource(room, ore, "hud.interact_ore", "res://assets/tiles/pit_props/prop_ore_node.png", Vector2(24, 16))
-				if randf() < 0.4:
-					_spawn_resource(room, "mind_shard", "hud.interact_forage", "res://assets/materials/mat_mind_shard.png", Vector2(-10, 28))
-			RoomData.TYPE_EXTRACT:
-				_spawn_extract(room)
-				if RunSession.floor_index >= 3:
-					_spawn_enemies(room, 1, _floor_enemy_hp() * 1.5, 0.2)
-			RoomData.TYPE_DESCENT:
-				_spawn_descent(room)
-			RoomData.TYPE_START:
-				if need_rescue and RunSession.floor_index == 1:
-					_spawn_distress(room)
-	if need_scale and scale_spawned == 0:
-		for room in rooms:
-			if room.room_type == RoomData.TYPE_COMBAT:
-				_spawn_scale(room)
-				break
-	if need_rescue and RunSession.floor_index > 1:
-		for room in rooms:
-			if room.room_type == RoomData.TYPE_RESOURCE or room.room_type == RoomData.TYPE_COMBAT:
-				_spawn_distress(room)
-				break
-	## 第 4 层等：若未刷出撤离信标则强制补一个
-	_ensure_extract_spawned()
+func _spawn_extract(pos: Vector2) -> void:
+	var b := ExtractScene.instantiate()
+	entities.add_child(b)
+	b.global_position = pos
+	b.extract_requested.connect(_on_extract)
 
 
-func _ensure_extract_spawned() -> void:
-	for c in entities.get_children():
-		if c.has_signal("extract_requested"):
-			return
-	var start = null
-	var target = null
-	for r in rooms:
-		if r.room_type == RoomData.TYPE_START:
-			start = r
-		if r.room_type == RoomData.TYPE_EXTRACT:
-			target = r
-	if target == null:
-		for r in rooms:
-			if r == start:
-				continue
-			if target == null or _manhattan_room(r, start) > _manhattan_room(target, start):
-				target = r
-		if target != null:
-			target.room_type = RoomData.TYPE_EXTRACT
-	if target != null:
-		_spawn_extract(target)
+func _spawn_descent(pos: Vector2) -> void:
+	var b := DescentScene.instantiate()
+	entities.add_child(b)
+	b.global_position = pos
 
 
-func _manhattan_room(a, b) -> int:
-	if a == null or b == null:
-		return 0
-	return absi(a.grid.x - b.grid.x) + absi(a.grid.y - b.grid.y)
-
-
-func _spawn_enemies(room, count: int, hp: float, rune_chance: float = 0.35) -> void:
-	for i in count:
-		var e := EnemyScene.instantiate()
-		entities.add_child(e)
-		e.max_hp = hp
-		e.hp = hp
-		e.drop_rune_chance = rune_chance
-		e.global_position = room.center() + Vector2(randf_range(-40, 40), randf_range(-30, 30))
-
-
-func _spawn_scale(room) -> void:
-	var e := ScaleRockScene.instantiate()
-	entities.add_child(e)
-	e.add_to_group("scale_rock")
-	e.max_hp = _floor_enemy_hp() * 1.6
-	e.hp = e.max_hp
-	e.global_position = room.center() + Vector2(randf_range(-20, 20), randf_range(-20, 20))
-
-
-func _spawn_resource(room, mat_id: String, prompt_key: String, icon_path: String, offset: Vector2 = Vector2(-20, 10)) -> void:
-	var node := ResourceScene.instantiate()
-	entities.add_child(node)
-	node.global_position = room.center() + offset
-	node.configure(0, mat_id, 1, prompt_key)
-	if node.has_node("Sprite"):
-		node.get_node("Sprite").texture = load(icon_path)
-
-
-func _spawn_chest(room) -> void:
-	var node := ResourceScene.instantiate()
-	entities.add_child(node)
-	node.global_position = room.center() + Vector2(0, -20)
-	var rid: String = str(RuneCatalog.DROP_POOL[randi() % RuneCatalog.DROP_POOL.size()])
-	node.configure(1, rid, 1, "hud.interact_chest")
-	if node.has_node("Sprite"):
-		node.get_node("Sprite").texture = load("res://assets/tiles/pit_props/prop_alchem_chest.png")
-
-
-func _spawn_extract(room) -> void:
-	var beacon := ExtractScene.instantiate()
-	entities.add_child(beacon)
-	beacon.global_position = room.center()
-	beacon.extract_requested.connect(_on_extract)
-
-
-func _spawn_descent(room) -> void:
-	var beacon := DescentScene.instantiate()
-	entities.add_child(beacon)
-	beacon.global_position = room.center()
-	beacon.descent_requested.connect(_on_descent)
-
-
-func _spawn_distress(room) -> void:
+func _spawn_distress(pos: Vector2) -> void:
 	var b := DistressScene.instantiate()
 	entities.add_child(b)
-	b.global_position = room.center() + Vector2(30, -10)
+	b.global_position = pos
 
 
-func _update_room_exploration() -> void:
-	var pos := player.global_position
-	for room in rooms:
-		if room.rect.grow(8.0).has_point(pos):
-			if not room.explored:
-				_reveal_room(room)
-			_current_room_id = room.id
-			return
+func _spawn_boss(pos: Vector2) -> void:
+	var def: Dictionary = RegionCatalog.BOSS.duplicate()
+	def["is_boss"] = true
+	_spawn_enemy_at(pos, def)
+	## 祭坛装饰
+	var altar := Sprite2D.new()
+	altar.texture = load("res://assets/props/boss/prop_boss_altar.png")
+	altar.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	altar.global_position = _markers.get("boss_altar", pos + Vector2(40, 0))
+	altar.z_index = -1
+	rooms_root.add_child(altar)
 
 
-func _reveal_room(room) -> void:
-	room.explored = true
-	if _fog_by_room.has(room.id):
-		var fog: Polygon2D = _fog_by_room[room.id]
+func _spawn_elite(rid: String) -> void:
+	var def: Dictionary = RegionCatalog.ELITES[rid].duplicate()
+	_spawn_enemy_at(_markers.get("elite_%s" % rid, Vector2.ZERO), def)
+
+
+func _spawn_warp_and_guard(rid: String) -> void:
+	var warp_id := "warp_%s" % rid
+	var pos: Vector2 = _markers.get(warp_id, Vector2.ZERO)
+	var warp := WarpScene.instantiate()
+	entities.add_child(warp)
+	warp.global_position = pos
+	warp.setup(warp_id)
+	warp.warp_menu_requested.connect(_on_warp_menu)
+	_warps[warp_id] = warp
+	if RunSession.is_warp_active(warp_id):
+		warp.set_activated(true)
+	else:
+		var gdef: Dictionary = RegionCatalog.GUARDS[warp_id].duplicate()
+		_spawn_enemy_at(pos + Vector2(36, 0), gdef)
+
+
+func _spawn_region_resources(rid: String) -> void:
+	var forage: Dictionary = RegionCatalog.FORAGE[rid]
+	var ore: Dictionary = RegionCatalog.ORE[rid]
+	for p in _markers.get("forage_%s" % rid, []):
+		_spawn_resource(p, str(forage.mat), "hud.interact_forage", str(forage.icon))
+	for p2 in _markers.get("ore_%s" % rid, []):
+		_spawn_resource(p2, str(ore.mat), "hud.interact_ore", str(ore.icon))
+
+
+func _spawn_region_mobs(rid: String) -> void:
+	var pool: Array = RegionCatalog.ENEMY_POOL[rid]
+	var pts: Array = _markers.get("mobs_%s" % rid, [])
+	for i in pts.size():
+		var def: Dictionary = pool[i % pool.size()].duplicate()
+		_spawn_enemy_at(pts[i], def)
+
+
+func _spawn_enemy_at(pos: Vector2, def: Dictionary) -> void:
+	var e := EnemyScene.instantiate()
+	entities.add_child(e)
+	e.global_position = pos
+	e.configure(def)
+	if e.has_signal("died_with_id") and not e.died_with_id.is_connected(_on_enemy_killed):
+		e.died_with_id.connect(_on_enemy_killed)
+
+
+func _spawn_resource(pos: Vector2, mat_id: String, prompt: String, icon: String) -> void:
+	var node := ResourceScene.instantiate()
+	entities.add_child(node)
+	node.global_position = pos
+	node.configure(0, mat_id, 1, prompt)
+	if node.has_node("Sprite") and ResourceLoader.exists(icon):
+		node.get_node("Sprite").texture = load(icon)
+
+
+func on_warp_guard_killed(warp_id: String) -> void:
+	if _warps.has(warp_id):
+		_warps[warp_id].set_activated(true)
+	if player:
+		player.show_toast(
+			Loc.t("warp.unlocked", [Loc.t("warp.%s" % warp_id)]),
+			PitEventLog.Category.SYSTEM
+		)
+
+
+func _on_enemy_killed(enemy_id: String, meta: Dictionary) -> void:
+	var display := EnemyCatalog.display_name(enemy_id)
+	var text := Loc.t("feed.kill", [display])
+	var category := PitEventLog.Category.KILL
+	if bool(meta.get("is_boss", false)):
+		text = Loc.t("feed.kill_boss", [display])
+	elif enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
+		text = Loc.t("feed.kill_elite", [display])
+	_push_feed(text, category)
+
+
+func _update_exploration() -> void:
+	_reveal_around(player.global_position)
+	var g := Floor1Generator.world_to_tile(player.global_position)
+	var rid := str(_region_of.get(g, ""))
+	if rid == RegionCatalog.REGION_SPAWN:
+		rid = RegionCatalog.REGION_A
+	if rid != "" and rid != _current_region:
+		_current_region = rid
+		_show_region_banner(rid)
+		_refresh_minimap()
+
+
+func _reveal_around(pos: Vector2) -> void:
+	var g := Floor1Generator.world_to_tile(pos)
+	var chunk := Floor1Generator.chunk_of_tile(g)
+	for oy in range(-1, 2):
+		for ox in range(-1, 2):
+			_reveal_chunk(chunk + Vector2i(ox, oy))
+
+
+func _reveal_chunk(ck: Vector2i) -> void:
+	if _explored_chunks.has(ck):
+		return
+	_explored_chunks[ck] = true
+	if _fog_chunks.has(ck):
+		var fog: Polygon2D = _fog_chunks[ck]
 		var tw := create_tween()
-		tw.tween_property(fog, "modulate:a", 0.0, 0.25)
+		tw.tween_property(fog, "modulate:a", 0.0, 0.2)
 		tw.finished.connect(func():
 			if is_instance_valid(fog):
 				fog.visible = false
@@ -465,8 +424,22 @@ func _reveal_room(room) -> void:
 	_refresh_minimap()
 
 
+func _show_region_banner(rid: String) -> void:
+	if not hud.has_node("RegionBanner"):
+		return
+	var banner: Label = hud.get_node("RegionBanner")
+	banner.text = Loc.t("hud.region_enter", [RegionCatalog.display_name(rid)])
+	banner.modulate.a = 1.0
+	var tw := create_tween()
+	tw.tween_interval(1.4)
+	tw.tween_property(banner, "modulate:a", 0.0, 0.5)
+
+
 func _setup_hud() -> void:
-	hud.get_node("HintLabel").text = Loc.t("hint.pit_floor")
+	if hud.has_node("TopLeft/HintLabel"):
+		hud.get_node("TopLeft/HintLabel").text = Loc.t("hint.pit_floor")
+	elif hud.has_node("HintLabel"):
+		hud.get_node("HintLabel").text = Loc.t("hint.pit_floor")
 	if hud.has_node("BagBtn"):
 		hud.get_node("BagBtn").text = Loc.t("hud.bag_btn")
 	if player and player.inventory and not player.inventory.changed.is_connected(_on_inventory_changed):
@@ -489,10 +462,9 @@ func _on_runes_changed() -> void:
 func _refresh_bag_grid() -> void:
 	if player == null:
 		return
-	var grid_path := "BagPanel/BagGrid"
-	if not hud.has_node(grid_path):
+	if not hud.has_node("BagPanel/BagGrid"):
 		return
-	var grid = hud.get_node(grid_path)
+	var grid = hud.get_node("BagPanel/BagGrid")
 	if grid.has_method("set_inventory_entries"):
 		grid.set_inventory_entries(player.inventory.slots)
 
@@ -519,8 +491,6 @@ func _toggle_bag() -> void:
 		hud.get_node("BagPanel").visible = _bag_open
 	if _bag_open:
 		_refresh_bag_grid()
-		if hud.has_node("BagPanel/Tooltip"):
-			hud.get_node("BagPanel/Tooltip").text = ""
 
 
 func _close_bag() -> void:
@@ -532,6 +502,11 @@ func _close_bag() -> void:
 func _on_bag_hover(_index: int, tip: String) -> void:
 	if hud.has_node("BagPanel/Tooltip"):
 		hud.get_node("BagPanel/Tooltip").text = tip
+
+
+func _on_death_hover(_index: int, tip: String) -> void:
+	if death_ui.has_node("Panel/Tooltip"):
+		death_ui.get_node("Panel/Tooltip").text = tip
 
 
 func _wire_rune_replace_ui() -> void:
@@ -561,7 +536,7 @@ func _on_rune_replace_requested(rune_id: String, candidates: Array) -> void:
 		var effect_key := "rune.%s.effect" % id_str
 		var effect := Loc.t(effect_key) if Loc.has_key(effect_key) else ""
 		b.text = "%s %d阶 — %s" % [RuneCatalog.display_name(id_str), rank, effect]
-		var captured := id_str
+		var captured: String = id_str
 		b.pressed.connect(func(): _confirm_rune_replace(captured))
 		list.add_child(b)
 
@@ -578,54 +553,6 @@ func _cancel_rune_replace() -> void:
 		player.cancel_rune_replace()
 	if hud.has_node("RuneReplace"):
 		hud.get_node("RuneReplace").visible = false
-
-
-func _update_hud() -> void:
-	if player == null:
-		return
-	if hud.has_node("HpBarBg/HpBarFill"):
-		var fill: ColorRect = hud.get_node("HpBarBg/HpBarFill")
-		var bg: ColorRect = hud.get_node("HpBarBg")
-		var ratio := clampf(player.hp / player.max_hp, 0.0, 1.0) if player.max_hp > 0.0 else 0.0
-		fill.size.x = bg.size.x * ratio
-	if hud.has_node("BagCountLabel"):
-		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.MAX_SLOTS])
-	var rune_lines: PackedStringArray = player.runes.describe()
-	var rune_text := Loc.t("hud.runes") + "：\n"
-	rune_text += Loc.t("hud.runes_none") if rune_lines.is_empty() else "\n".join(rune_lines)
-	hud.get_node("RuneLabel").text = rune_text
-	hud.get_node("PromptLabel").text = player.get_interact_prompt()
-	if hud.has_node("FloorLabel"):
-		var bname := Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
-		hud.get_node("FloorLabel").text = "%s | %s" % [Loc.t("hud.floor", [RunSession.floor_index]), Loc.t("hud.brand", [bname])]
-	if _current_room_id >= 0 and _current_room_id < rooms.size():
-		hud.get_node("RoomLabel").text = Loc.t(rooms[_current_room_id].type_name_key())
-	_update_quest_hud()
-	_refresh_minimap_current()
-
-
-func _quest_progress() -> Dictionary:
-	var slots: Array = player.inventory.slots if player else []
-	return QuestDefs.run_progress(
-		RunSession.quest_id_snapshot,
-		slots,
-		RunSession.kill_scale,
-		RunSession.rescue_done
-	)
-
-
-func _update_quest_hud() -> void:
-	var info: Dictionary = _quest_progress()
-	if hud.has_node("QuestSummary"):
-		if info.is_empty():
-			hud.get_node("QuestSummary").text = Loc.t("hud.quest_none")
-		else:
-			var line := Loc.t("hud.quest_progress", [str(info.get("name")), str(info.get("progress_text"))])
-			if bool(info.get("complete", false)):
-				line += " " + Loc.t("hud.quest_done")
-			hud.get_node("QuestSummary").text = line
-	if _quest_open:
-		_refresh_quest_panel()
 
 
 func _wire_quest_ui() -> void:
@@ -658,6 +585,25 @@ func _close_quest_panel() -> void:
 		hud.get_node("QuestPanel").visible = false
 
 
+func _quest_progress() -> Dictionary:
+	var slots: Array = player.inventory.slots if player else []
+	return QuestDefs.run_progress(RunSession.quest_id_snapshot, slots, RunSession.kill_scale, RunSession.rescue_done)
+
+
+func _update_quest_hud() -> void:
+	var info: Dictionary = _quest_progress()
+	if hud.has_node("QuestSummary"):
+		if info.is_empty():
+			hud.get_node("QuestSummary").text = Loc.t("hud.quest_none")
+		else:
+			var line := Loc.t("hud.quest_progress", [str(info.get("name")), str(info.get("progress_text"))])
+			if bool(info.get("complete", false)):
+				line += " " + Loc.t("hud.quest_done")
+			hud.get_node("QuestSummary").text = line
+	if _quest_open:
+		_refresh_quest_panel()
+
+
 func _refresh_quest_panel() -> void:
 	if not hud.has_node("QuestPanel/Body"):
 		return
@@ -674,49 +620,148 @@ func _refresh_quest_panel() -> void:
 	var reward := Loc.t("quest.reward", [int(info.get("reward_gold", 0)), mat_text])
 	var done_mark := " " + Loc.t("hud.quest_done") if bool(info.get("complete", false)) else ""
 	body.text = Loc.t("hud.quest_detail", [
-		str(info.get("name")),
-		str(info.get("progress_text")),
-		done_mark,
-		str(info.get("desc")),
-		reward,
+		str(info.get("name")), str(info.get("progress_text")), done_mark, str(info.get("desc")), reward,
 	])
+
+
+func _wire_warp_ui() -> void:
+	if hud.has_node("WarpPanel/CloseBtn"):
+		var btn: Button = hud.get_node("WarpPanel/CloseBtn")
+		if not btn.pressed.is_connected(_close_warp_menu):
+			btn.pressed.connect(_close_warp_menu)
+
+
+func _on_warp_menu(from_id: String, _by: Node) -> void:
+	_warp_menu_from = from_id
+	if not hud.has_node("WarpPanel"):
+		## 无面板则直接找另一点
+		_warp_to_other(from_id)
+		return
+	var panel: Panel = hud.get_node("WarpPanel")
+	panel.visible = true
+	if hud.has_node("WarpPanel/Title"):
+		hud.get_node("WarpPanel/Title").text = Loc.t("warp.menu_title")
+	var list: VBoxContainer = hud.get_node("WarpPanel/List")
+	for c in list.get_children():
+		c.queue_free()
+	var cost := MetaProgress.WARP_COST_TRAVEL
+	var afford := MetaProgress.can_afford_mind(cost)
+	if hud.has_node("WarpPanel/Hint"):
+		hud.get_node("WarpPanel/Hint").text = Loc.t("warp.menu_hint", [cost, MetaProgress.mind_value])
+	for wid in ["warp_a", "warp_b", "warp_c"]:
+		if wid == from_id:
+			continue
+		if not RunSession.is_warp_active(wid):
+			continue
+		var b := Button.new()
+		b.text = Loc.t("warp.travel_to", [Loc.t("warp.%s" % wid)])
+		b.disabled = not afford
+		var captured: String = str(wid)
+		b.pressed.connect(func(): _confirm_warp_travel(captured))
+		list.add_child(b)
+	if list.get_child_count() == 0:
+		var tip := Label.new()
+		tip.text = Loc.t("warp.no_other")
+		list.add_child(tip)
+
+
+func _confirm_warp_travel(to_id: String) -> void:
+	if not MetaProgress.consume_mind_value(MetaProgress.WARP_COST_TRAVEL):
+		if player:
+			player.show_toast(Loc.t("warp.no_mind"), PitEventLog.Category.WARN)
+		_close_warp_menu()
+		return
+	if _markers.has(to_id) and player:
+		player.global_position = _markers[to_id]
+		_reveal_around(player.global_position)
+		player.show_toast(Loc.t("warp.traveled", [Loc.t("warp.%s" % to_id)]), PitEventLog.Category.SYSTEM)
+	_close_warp_menu()
+
+
+func _warp_to_other(from_id: String) -> void:
+	for wid in ["warp_a", "warp_b", "warp_c"]:
+		if wid == from_id:
+			continue
+		if RunSession.is_warp_active(wid):
+			_confirm_warp_travel(wid)
+			return
+	if player:
+		player.show_toast(Loc.t("warp.no_other"), PitEventLog.Category.WARN)
+
+
+func _close_warp_menu() -> void:
+	_warp_menu_from = ""
+	if hud.has_node("WarpPanel"):
+		hud.get_node("WarpPanel").visible = false
 
 
 func _setup_minimap() -> void:
 	if not hud.has_node("Minimap"):
 		return
 	var mm = hud.get_node("Minimap")
-	if mm.has_method("reset"):
-		mm.reset()
-	if mm.has_method("set_rooms"):
-		mm.set_rooms(rooms)
-	if mm.has_method("set_current"):
-		mm.set_current(_current_room_id)
-	if mm.has_method("refresh"):
-		mm.refresh()
+	if mm.has_method("setup_floor1"):
+		mm.setup_floor1(_map, _explored_chunks)
+	_refresh_minimap()
 
 
 func _refresh_minimap() -> void:
 	if not hud.has_node("Minimap"):
 		return
 	var mm = hud.get_node("Minimap")
-	## 下潜/重建后 rooms 会换新数组；旧引用会导致新房间不显示
-	if not is_same(mm.rooms, rooms):
-		mm.set_rooms(rooms)
-	mm.set_current(_current_room_id)
-	mm.refresh()
-
-
-func _refresh_minimap_current() -> void:
-	if not hud.has_node("Minimap"):
-		return
-	var mm = hud.get_node("Minimap")
-	if not is_same(mm.rooms, rooms):
-		mm.set_rooms(rooms)
-		mm.set_current(_current_room_id)
+	var pos := player.global_position if player else Vector2.ZERO
+	if mm.has_method("update_floor1"):
+		mm.update_floor1(_explored_chunks, pos, _current_region)
+	elif mm.has_method("refresh"):
 		mm.refresh()
+
+
+func _update_hud() -> void:
+	if player == null:
 		return
-	mm.set_current(_current_room_id)
+	if hud.has_node("StatsBar/HpBarBg/HpBarFill"):
+		var fill: ColorRect = hud.get_node("StatsBar/HpBarBg/HpBarFill")
+		var bg: ColorRect = hud.get_node("StatsBar/HpBarBg")
+		var ratio := clampf(player.hp / player.max_hp, 0.0, 1.0) if player.max_hp > 0.0 else 0.0
+		fill.size.x = bg.size.x * ratio
+	elif hud.has_node("HpBarBg/HpBarFill"):
+		var fill: ColorRect = hud.get_node("HpBarBg/HpBarFill")
+		var bg: ColorRect = hud.get_node("HpBarBg")
+		var ratio := clampf(player.hp / player.max_hp, 0.0, 1.0) if player.max_hp > 0.0 else 0.0
+		fill.size.x = bg.size.x * ratio
+	if hud.has_node("StatsBar/HpText"):
+		hud.get_node("StatsBar/HpText").text = Loc.t("hud.hp", [int(round(player.hp)), int(round(player.max_hp))])
+	if hud.has_node("StatsBar/AttrText"):
+		var mind_txt := Loc.t("hud.mind", [MetaProgress.mind_level])
+		var value_txt := Loc.t("hud.mind_value", [MetaProgress.mind_value])
+		var special_txt := Loc.t("hud.special_mind_yes") if RunSession.special_mind else Loc.t("hud.special_mind_no")
+		hud.get_node("StatsBar/AttrText").text = "%s | %s | %s" % [mind_txt, value_txt, special_txt]
+	if hud.has_node("BagCountLabel"):
+		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.MAX_SLOTS])
+	var rune_lines: PackedStringArray = player.runes.describe()
+	var rune_text := Loc.t("hud.runes_none") if rune_lines.is_empty() else "\n".join(rune_lines)
+	if hud.has_node("RunePanel/RuneScroll/RuneLabel"):
+		hud.get_node("RunePanel/RuneScroll/RuneLabel").text = rune_text
+		if hud.has_node("RunePanel/RuneTitle"):
+			hud.get_node("RunePanel/RuneTitle").text = Loc.t("hud.runes")
+	elif hud.has_node("RuneLabel"):
+		hud.get_node("RuneLabel").text = Loc.t("hud.runes") + "：\n" + rune_text
+	hud.get_node("PromptLabel").text = player.get_interact_prompt()
+	var bname := Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
+	var rname := RegionCatalog.display_name(_current_region) if _current_region != "" else "—"
+	if hud.has_node("TopLeft/FloorLabel"):
+		hud.get_node("TopLeft/FloorLabel").text = "%s | %s | %s" % [
+			Loc.t("hud.floor", [1]),
+			Loc.t("hud.region", [rname]),
+			Loc.t("hud.brand", [bname]),
+		]
+	elif hud.has_node("FloorLabel"):
+		hud.get_node("FloorLabel").text = "%s | %s | %s" % [
+			Loc.t("hud.floor", [1]),
+			Loc.t("hud.region", [rname]),
+			Loc.t("hud.brand", [bname]),
+		]
+	_update_quest_hud()
+	_refresh_minimap()
 
 
 func _on_extract(_by: Node) -> void:
@@ -725,6 +770,15 @@ func _on_extract(_by: Node) -> void:
 
 func _on_player_died() -> void:
 	_show_death_keep()
+
+
+func _on_toast(text: String, category: int = PitEventLog.Category.SYSTEM, color: Color = Color.TRANSPARENT) -> void:
+	_push_feed(text, category, color)
+
+
+func _push_feed(text: String, category: int = PitEventLog.Category.SYSTEM, color: Color = Color.TRANSPARENT) -> void:
+	if hud.has_node("EventLog") and hud.get_node("EventLog").has_method("push"):
+		hud.get_node("EventLog").push(text, category, color)
 
 
 func _finish_success() -> void:
@@ -739,7 +793,7 @@ func _finish_success() -> void:
 		"rescue_done": RunSession.rescue_done,
 	})
 	MetaProgress.merge_inventory_into_stash(player.inventory.slots)
-	MetaProgress.add_intel(Loc.t("intel.floor_cleared", [RunSession.floor_index]))
+	MetaProgress.add_intel(Loc.t("intel.floor_cleared", [1]))
 	extract_ui.visible = true
 	var title: Label = extract_ui.get_node("Panel/Title")
 	var body: Label = extract_ui.get_node("Panel/Body")
@@ -750,6 +804,8 @@ func _finish_success() -> void:
 	lines.append_array(mats if not mats.is_empty() else PackedStringArray([Loc.t("extract.empty")]))
 	lines.append("")
 	lines.append(Loc.t("extract.runes_lost"))
+	if RunSession.special_mind:
+		lines.append(Loc.t("extract.special_mind_lost"))
 	if q == "ok":
 		lines.append(Loc.t("extract.quest_ok"))
 	elif RunSession.quest_id_snapshot != "" and q != "ok":
@@ -773,55 +829,48 @@ func _wire_death_ui() -> void:
 		var grid = death_ui.get_node("Panel/DeathGrid")
 		if grid.has_signal("slot_pressed"):
 			grid.slot_pressed.connect(_select_death_slot)
+		if grid.has_signal("slot_hovered") and not grid.slot_hovered.is_connected(_on_death_hover):
+			grid.slot_hovered.connect(_on_death_hover)
+	if extract_ui.has_node("Panel/RetryButton"):
+		extract_ui.get_node("Panel/RetryButton").pressed.connect(_back_to_hub)
 
 
 func _show_death_keep() -> void:
 	if _run_over:
 		return
 	_run_over = true
-	if player:
-		player.input_locked = true
+	MetaProgress.apply_death_wear()
+	if RunSession.quest_id_snapshot != "":
+		MetaProgress.fail_quest()
 	death_ui.visible = true
 	death_ui.get_node("Panel/Title").text = Loc.t("extract.fail_title")
 	death_ui.get_node("Panel/Hint").text = Loc.t("extract.keep_one")
 	_death_selected = -1
-	if death_ui.has_node("Panel/DeathGrid"):
+	if death_ui.has_node("Panel/Tooltip"):
+		death_ui.get_node("Panel/Tooltip").text = ""
+	if death_ui.has_node("Panel/DeathGrid") and player:
 		var grid = death_ui.get_node("Panel/DeathGrid")
 		if grid.has_method("set_inventory_entries"):
 			grid.set_inventory_entries(player.inventory.slots)
+			if grid.get("selectable") != null:
+				grid.selectable = true
 
 
-func _select_death_slot(idx: int) -> void:
-	_death_selected = idx
-	if death_ui.has_node("Panel/DeathGrid"):
-		var grid = death_ui.get_node("Panel/DeathGrid")
-		if grid.has_method("select_slot"):
-			grid.select_slot(idx)
+func _select_death_slot(index: int) -> void:
+	_death_selected = index
 
 
 func _confirm_death_keep() -> void:
-	var kept: Array = player.inventory.keep_only_index(_death_selected)
+	var kept: Array = []
+	if player and _death_selected >= 0 and _death_selected < player.inventory.slots.size():
+		kept.append(player.inventory.slots[_death_selected].duplicate(true))
 	MetaProgress.merge_inventory_into_stash(kept)
-	MetaProgress.apply_death_wear()
-	if RunSession.quest_id_snapshot != "":
-		MetaProgress.fail_quest()
-	player.runes.clear()
+	if player:
+		player.inventory.clear()
+		player.runes.clear()
 	RunSession.clear()
-	get_tree().change_scene_to_file("res://scenes/hub/crane_hub.tscn")
+	_back_to_hub()
 
 
-func _on_toast(text: String) -> void:
-	var toast: Label = hud.get_node("ToastLabel")
-	toast.text = text
-	toast.modulate.a = 1.0
-	var tw := create_tween()
-	tw.tween_interval(1.4)
-	tw.tween_property(toast, "modulate:a", 0.0, 0.4)
-
-
-func _on_retry_pressed() -> void:
-	get_tree().change_scene_to_file("res://scenes/hub/crane_hub.tscn")
-
-
-func _on_arena_pressed() -> void:
+func _back_to_hub() -> void:
 	get_tree().change_scene_to_file("res://scenes/hub/crane_hub.tscn")
