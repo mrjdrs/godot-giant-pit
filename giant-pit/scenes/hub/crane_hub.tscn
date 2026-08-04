@@ -1,0 +1,98 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/hub/crane_hub.gd" id="1_script"]
+
+[node name="CraneHub" type="Node2D"]
+script = ExtResource("1_script")
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Entities" type="Node2D" parent="World"]
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="HintLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 700.0
+offset_bottom = 56.0
+theme_override_font_sizes/font_size = 13
+text = "鹤城"
+
+[node name="StatusLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 60.0
+offset_right = 700.0
+offset_bottom = 88.0
+theme_override_font_sizes/font_size = 14
+text = "状态"
+
+[node name="ToastLabel" type="Label" parent="HUD"]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 100.0
+offset_right = 200.0
+offset_bottom = 132.0
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0)
+
+[node name="Panel" type="Panel" parent="HUD"]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -180.0
+offset_right = 260.0
+offset_bottom = 180.0
+
+[node name="Title" type="Label" parent="HUD/Panel"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 500.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 18
+text = "标题"
+horizontal_alignment = 1
+
+[node name="Body" type="RichTextLabel" parent="HUD/Panel"]
+offset_left = 20.0
+offset_top = 48.0
+offset_right = 500.0
+offset_bottom = 240.0
+bbcode_enabled = false
+fit_content = false
+scroll_active = true
+text = ""
+
+[node name="BtnA" type="Button" parent="HUD/Panel"]
+offset_left = 20.0
+offset_top = 260.0
+offset_right = 160.0
+offset_bottom = 300.0
+text = "A"
+
+[node name="BtnB" type="Button" parent="HUD/Panel"]
+offset_left = 180.0
+offset_top = 260.0
+offset_right = 320.0
+offset_bottom = 300.0
+text = "B"
+
+[node name="BtnC" type="Button" parent="HUD/Panel"]
+offset_left = 340.0
+offset_top = 260.0
+offset_right = 480.0
+offset_bottom = 300.0
+text = "C"
+
+[node name="BtnClose" type="Button" parent="HUD/Panel"]
+offset_left = 200.0
+offset_top = 310.0
+offset_right = 320.0
+offset_bottom = 344.0
+text = "关闭"

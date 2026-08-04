@@ -1,0 +1,46 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/enemy/pit_enemy.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/enemies/enemy_scale_rock.png" id="2"]
+[ext_resource type="Script" path="res://scripts/combat/hurtbox.gd" id="3"]
+
+[sub_resource type="CircleShape2D" id="body"]
+radius = 12.0
+
+[sub_resource type="CircleShape2D" id="hurt"]
+radius = 14.0
+
+[node name="ScaleRock" type="CharacterBody2D"]
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("1")
+max_hp = 55.0
+move_speed = 55.0
+contact_damage = 10.0
+drop_mat_id = "beast_scale"
+drop_rune_chance = 0.45
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("2")
+texture_filter = 0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("body")
+
+[node name="Hurtbox" type="Area2D" parent="."]
+collision_layer = 16
+collision_mask = 0
+monitoring = false
+script = ExtResource("3")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Hurtbox"]
+shape = SubResource("hurt")
+
+[node name="HPLabel" type="Label" parent="."]
+offset_left = -20.0
+offset_top = -24.0
+offset_right = 40.0
+offset_bottom = -8.0
+theme_override_font_sizes/font_size = 10
+text = "55/55"
+horizontal_alignment = 1

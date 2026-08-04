@@ -1,0 +1,244 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/pit/pit_floor.gd" id="1_script"]
+
+[node name="PitFloor" type="Node2D"]
+script = ExtResource("1_script")
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Rooms" type="Node2D" parent="World"]
+
+[node name="Entities" type="Node2D" parent="World"]
+
+[node name="Fog" type="Node2D" parent="World"]
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="HintLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 720.0
+offset_bottom = 56.0
+theme_override_font_sizes/font_size = 13
+text = "提示"
+
+[node name="FloorLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 52.0
+offset_right = 520.0
+offset_bottom = 76.0
+theme_override_font_sizes/font_size = 14
+text = "层"
+
+[node name="HpLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 76.0
+offset_right = 280.0
+offset_bottom = 100.0
+theme_override_font_sizes/font_size = 14
+text = "生命"
+
+[node name="BagLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 100.0
+offset_right = 280.0
+offset_bottom = 124.0
+theme_override_font_sizes/font_size = 14
+text = "背包"
+
+[node name="RuneLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 124.0
+offset_right = 520.0
+offset_bottom = 148.0
+theme_override_font_sizes/font_size = 14
+text = "符文"
+
+[node name="RoomLabel" type="Label" parent="HUD"]
+offset_left = 12.0
+offset_top = 148.0
+offset_right = 280.0
+offset_bottom = 172.0
+theme_override_font_sizes/font_size = 14
+text = "房间"
+
+[node name="PromptLabel" type="Label" parent="HUD"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -64.0
+offset_right = 200.0
+offset_bottom = -32.0
+theme_override_colors/font_color = Color(1, 0.92, 0.55, 1)
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+
+[node name="ToastLabel" type="Label" parent="HUD"]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -220.0
+offset_top = 72.0
+offset_right = 220.0
+offset_bottom = 104.0
+theme_override_font_sizes/font_size = 15
+horizontal_alignment = 1
+modulate = Color(1, 1, 1, 0)
+
+[node name="ExtractUI" type="CanvasLayer" parent="."]
+visible = false
+
+[node name="Dim" type="ColorRect" parent="ExtractUI"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0, 0, 0, 0.55)
+
+[node name="Panel" type="Panel" parent="ExtractUI"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -160.0
+offset_right = 220.0
+offset_bottom = 160.0
+
+[node name="Title" type="Label" parent="ExtractUI/Panel"]
+offset_left = 20.0
+offset_top = 16.0
+offset_right = 420.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 22
+text = "撤离成功"
+horizontal_alignment = 1
+
+[node name="Body" type="Label" parent="ExtractUI/Panel"]
+offset_left = 24.0
+offset_top = 56.0
+offset_right = 416.0
+offset_bottom = 220.0
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+
+[node name="RetryButton" type="Button" parent="ExtractUI/Panel"]
+offset_left = 120.0
+offset_top = 240.0
+offset_right = 320.0
+offset_bottom = 280.0
+text = "返回鹤城"
+
+[node name="ArenaButton" type="Button" parent="ExtractUI/Panel"]
+visible = false
+offset_left = 240.0
+offset_top = 240.0
+offset_right = 400.0
+offset_bottom = 280.0
+text = "隐藏"
+
+[node name="DeathUI" type="CanvasLayer" parent="."]
+visible = false
+
+[node name="Dim" type="ColorRect" parent="DeathUI"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.1, 0, 0, 0.6)
+
+[node name="Panel" type="Panel" parent="DeathUI"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -200.0
+offset_right = 260.0
+offset_bottom = 200.0
+
+[node name="Title" type="Label" parent="DeathUI/Panel"]
+offset_left = 20.0
+offset_top = 12.0
+offset_right = 500.0
+offset_bottom = 44.0
+theme_override_font_sizes/font_size = 20
+text = "探索失败"
+horizontal_alignment = 1
+
+[node name="Hint" type="Label" parent="DeathUI/Panel"]
+offset_left = 20.0
+offset_top = 48.0
+offset_right = 500.0
+offset_bottom = 76.0
+text = "请选择保留的 1 格"
+horizontal_alignment = 1
+
+[node name="Slots" type="GridContainer" parent="DeathUI/Panel"]
+offset_left = 24.0
+offset_top = 88.0
+offset_right = 496.0
+offset_bottom = 300.0
+columns = 3
+
+[node name="Slot0" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "0"
+
+[node name="Slot1" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "1"
+
+[node name="Slot2" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "2"
+
+[node name="Slot3" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "3"
+
+[node name="Slot4" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "4"
+
+[node name="Slot5" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "5"
+
+[node name="Slot6" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "6"
+
+[node name="Slot7" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "7"
+
+[node name="Slot8" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "8"
+
+[node name="Slot9" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "9"
+
+[node name="Slot10" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "10"
+
+[node name="Slot11" type="Button" parent="DeathUI/Panel/Slots"]
+custom_minimum_size = Vector2(150, 36)
+text = "11"
+
+[node name="ConfirmButton" type="Button" parent="DeathUI/Panel"]
+offset_left = 160.0
+offset_top = 320.0
+offset_right = 360.0
+offset_bottom = 360.0
+text = "确认带回"
+
+[connection signal="pressed" from="ExtractUI/Panel/RetryButton" to="." method="_on_retry_pressed"]
+[connection signal="pressed" from="ExtractUI/Panel/ArenaButton" to="." method="_on_arena_pressed"]

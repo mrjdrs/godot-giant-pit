@@ -1,0 +1,47 @@
+[gd_scene load_steps=7 format=3 uid="uid://bplayerblade01"]
+
+[ext_resource type="Script" path="res://scripts/player/player.gd" id="1_player"]
+[ext_resource type="Texture2D" path="res://assets/characters/player/player_explorer.png" id="2_body"]
+[ext_resource type="Texture2D" path="res://assets/characters/player/weapon_blade.png" id="3_blade"]
+[ext_resource type="Script" path="res://scripts/combat/hitbox.gd" id="4_hitbox"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_body"]
+radius = 8.0
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_hit"]
+size = Vector2(28, 18)
+
+[node name="Player" type="CharacterBody2D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1_player")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("2_body")
+texture_filter = 0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_body")
+
+[node name="BladePivot" type="Node2D" parent="."]
+
+[node name="BladeSprite" type="Sprite2D" parent="BladePivot"]
+position = Vector2(14, 0)
+texture = ExtResource("3_blade")
+texture_filter = 0
+
+[node name="Hitbox" type="Area2D" parent="BladePivot"]
+collision_layer = 8
+collision_mask = 16
+monitorable = false
+monitoring = false
+script = ExtResource("4_hitbox")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="BladePivot/Hitbox"]
+position = Vector2(20, 0)
+shape = SubResource("RectangleShape2D_hit")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+zoom = Vector2(3, 3)
+position_smoothing_enabled = true
+position_smoothing_speed = 10.0
