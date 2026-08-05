@@ -43,12 +43,12 @@ func _on_interact(by: Node) -> void:
 			else:
 				_done = false
 				enabled = true
-				_toast(by, Loc.t("bag.full"), PitEventLog.Category.WARN)
+				## 满格/超重 toast 已由 player.try_add_material 发出
 	elif content_type == ContentType.RUNE:
 		if by.has_method("try_add_rune"):
 			var result: String = by.try_add_rune(content_id)
 			_handle_rune_result(by, result)
-			if result == "ok" or result == "upgraded":
+			if result == "ok":
 				call_deferred("queue_free")
 			else:
 				_done = false
@@ -64,18 +64,10 @@ func _handle_rune_result(by: Node, result: String) -> void:
 				PitEventLog.Category.RUNE,
 				RuneCatalog.tier_color(content_id)
 			)
-		"upgraded":
-			var rank := 1
-			if by.get("runes") != null:
-				rank = int(by.runes.get_rank(content_id))
-			_toast(
-				by,
-				Loc.t("rune.upgraded", [RuneCatalog.display_name(content_id), rank]),
-				PitEventLog.Category.RUNE,
-				RuneCatalog.tier_color(content_id)
-			)
 		"full":
-			_toast(by, Loc.t("rune.slots_full"), PitEventLog.Category.WARN)
+			_toast(by, Loc.t("bag.full"), PitEventLog.Category.WARN)
+		"overweight":
+			_toast(by, Loc.t("bag.overweight"), PitEventLog.Category.WARN)
 		_:
 			pass
 

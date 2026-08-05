@@ -14,6 +14,7 @@ const DescentScene = preload("res://scenes/pit/descent_beacon.tscn")
 const DistressScene = preload("res://scenes/pit/distress_beacon.tscn")
 const ResourceScene = preload("res://scenes/pit/resource_node.tscn")
 const WarpScene = preload("res://scenes/pit/warp_beacon.tscn")
+const SheetHostScript = preload("res://scripts/ui/character_sheet_host.gd")
 
 @onready var world: Node2D = $World
 @onready var rooms_root: Node2D = $World/Rooms
@@ -24,6 +25,7 @@ const WarpScene = preload("res://scenes/pit/warp_beacon.tscn")
 @onready var death_ui: CanvasLayer = $DeathUI
 
 var player: CharacterBody2D = null
+var sheet_host: CanvasLayer = null
 var _map: Dictionary = {}
 var _walkable: Dictionary = {}
 var _region_of: Dictionary = {}
@@ -35,7 +37,6 @@ var _current_region: String = ""
 var _run_over: bool = false
 var _death_selected: int = -1
 var _death_wired: bool = false
-var _bag_open: bool = false
 var _quest_open: bool = false
 var _warp_menu_from: String = ""
 var _minimap_dirty: bool = false
@@ -52,21 +53,37 @@ func _ready() -> void:
 		hud.get_node("BagPanel").visible = false
 	if hud.has_node("RuneReplace"):
 		hud.get_node("RuneReplace").visible = false
+	if hud.has_node("RunePanel"):
+		hud.get_node("RunePanel").visible = false
 	if hud.has_node("QuestPanel"):
 		hud.get_node("QuestPanel").visible = false
 	if hud.has_node("WarpPanel"):
 		hud.get_node("WarpPanel").visible = false
 	if hud.has_node("RegionBanner"):
 		hud.get_node("RegionBanner").modulate.a = 0.0
+	_ensure_sheet_host()
 	AudioManager.play_bgm()
 	call_deferred("_deferred_boot")
+
+
+func _ensure_sheet_host() -> void:
+	if sheet_host != null:
+		return
+	sheet_host = CanvasLayer.new()
+	sheet_host.set_script(SheetHostScript)
+	add_child(sheet_host)
+	sheet_host.panel_closed.connect(_on_sheet_closed)
+
+
+func _on_sheet_closed() -> void:
+	if player != null and not _run_over:
+		player.input_locked = false
 
 
 func _deferred_boot() -> void:
 	_build_floor_level()
 	_wire_death_ui()
 	_wire_bag_ui()
-	_wire_rune_replace_ui()
 	_wire_quest_ui()
 	_wire_warp_ui()
 	extract_ui.get_node("Panel/RetryButton").text = Loc.t("extract.back_hub")
@@ -92,7 +109,18 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 	if event.is_action_pressed("toggle_bag"):
-		_toggle_bag()
+		if sheet_host:
+			sheet_host.toggle_bag()
+		get_viewport().set_input_as_handled()
+		return
+	if event.is_action_pressed("toggle_stats"):
+		if sheet_host:
+			sheet_host.toggle_stats()
+		get_viewport().set_input_as_handled()
+		return
+	if event.is_action_pressed("toggle_skills"):
+		if sheet_host:
+			sheet_host.toggle_skills()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -317,8 +345,6 @@ func _spawn_player() -> void:
 	player.apply_meta_loadout(RunSession.brand_quality)
 	player.died.connect(_on_player_died)
 	player.toast.connect(_on_toast)
-	if not player.rune_replace_requested.is_connected(_on_rune_replace_requested):
-		player.rune_replace_requested.connect(_on_rune_replace_requested)
 	_reveal_around(player.global_position)
 
 
@@ -450,7 +476,7 @@ func on_warp_guard_killed(warp_id: String) -> void:
 
 func _on_enemy_killed(enemy_id: String, meta: Dictionary) -> void:
 	var display := EnemyCatalog.display_name(enemy_id)
-	var text := Loc.t("feed.kill", [display])
+	var text: String = Loc.t("feed.kill", [display])
 	var category := PitEventLog.Category.KILL
 	if bool(meta.get("is_boss", false)):
 		text = Loc.t("feed.kill_boss", [display])
@@ -520,27 +546,34 @@ func _setup_hud() -> void:
 		hud.get_node("HintLabel").text = Loc.t("hint.pit_floor")
 	if hud.has_node("BagBtn"):
 		hud.get_node("BagBtn").text = Loc.t("hud.bag_btn")
+	_ensure_sheet_host()
+	if sheet_host and player:
+		sheet_host.bind_player(player, false)
 	if player and not player.hp_changed.is_connected(_on_player_hp_changed):
 		player.hp_changed.connect(_on_player_hp_changed)
 	if player and player.inventory and not player.inventory.changed.is_connected(_on_inventory_changed):
 		player.inventory.changed.connect(_on_inventory_changed)
-	if player and player.runes and not player.runes.changed.is_connected(_on_runes_changed):
-		player.runes.changed.connect(_on_runes_changed)
+	if player and player.skills and not player.skills.changed.is_connected(_on_skills_changed):
+		player.skills.changed.connect(_on_skills_changed)
 	if player and not player.interact_prompt_changed.is_connected(_on_interact_prompt_changed):
 		player.interact_prompt_changed.connect(_on_interact_prompt_changed)
 	if not MetaProgress.changed.is_connected(_on_meta_progress_changed):
 		MetaProgress.changed.connect(_on_meta_progress_changed)
-	_refresh_bag_grid()
 	_update_hud()
 	_on_interact_prompt_changed(player.get_interact_prompt())
 
 
 func _on_inventory_changed() -> void:
-	_refresh_bag_grid()
+	if sheet_host and sheet_host.bag_panel and sheet_host.bag_panel.visible:
+		sheet_host.bag_panel.refresh()
 	_update_hud()
 
 
-func _on_runes_changed() -> void:
+func _on_skills_changed() -> void:
+	if sheet_host and sheet_host.skills_panel and sheet_host.skills_panel.visible:
+		sheet_host.skills_panel.refresh()
+	if sheet_host and sheet_host.stats_panel and sheet_host.stats_panel.visible:
+		sheet_host.stats_panel.refresh()
 	_update_hud()
 
 
@@ -557,100 +590,19 @@ func _on_interact_prompt_changed(text: String) -> void:
 		hud.get_node("PromptLabel").text = text
 
 
-func _refresh_bag_grid() -> void:
-	if player == null:
-		return
-	if not hud.has_node("BagPanel/BagGrid"):
-		return
-	var grid = hud.get_node("BagPanel/BagGrid")
-	if grid.has_method("set_inventory_entries"):
-		grid.set_inventory_entries(player.inventory.slots)
-
-
 func _wire_bag_ui() -> void:
 	if hud.has_node("BagBtn") and not hud.get_node("BagBtn").pressed.is_connected(_toggle_bag):
 		hud.get_node("BagBtn").pressed.connect(_toggle_bag)
-	if hud.has_node("BagPanel/CloseBtn"):
-		var close: Button = hud.get_node("BagPanel/CloseBtn")
-		close.text = Loc.t("hud.bag_close")
-		if not close.pressed.is_connected(_close_bag):
-			close.pressed.connect(_close_bag)
-	if hud.has_node("BagPanel/Title"):
-		hud.get_node("BagPanel/Title").text = Loc.t("hud.bag_title")
-	if hud.has_node("BagPanel/BagGrid"):
-		var grid = hud.get_node("BagPanel/BagGrid")
-		if grid.has_signal("slot_hovered") and not grid.slot_hovered.is_connected(_on_bag_hover):
-			grid.slot_hovered.connect(_on_bag_hover)
 
 
 func _toggle_bag() -> void:
-	_bag_open = not _bag_open
-	if hud.has_node("BagPanel"):
-		hud.get_node("BagPanel").visible = _bag_open
-	if _bag_open:
-		_refresh_bag_grid()
-
-
-func _close_bag() -> void:
-	_bag_open = false
-	if hud.has_node("BagPanel"):
-		hud.get_node("BagPanel").visible = false
-
-
-func _on_bag_hover(_index: int, tip: String) -> void:
-	if hud.has_node("BagPanel/Tooltip"):
-		hud.get_node("BagPanel/Tooltip").text = tip
+	if sheet_host:
+		sheet_host.toggle_bag()
 
 
 func _on_death_hover(_index: int, tip: String) -> void:
 	if death_ui.has_node("Panel/Tooltip"):
 		death_ui.get_node("Panel/Tooltip").text = tip
-
-
-func _wire_rune_replace_ui() -> void:
-	if hud.has_node("RuneReplace/CancelBtn"):
-		var btn: Button = hud.get_node("RuneReplace/CancelBtn")
-		if not btn.pressed.is_connected(_cancel_rune_replace):
-			btn.pressed.connect(_cancel_rune_replace)
-	if hud.has_node("RuneReplace/Title"):
-		hud.get_node("RuneReplace/Title").text = Loc.t("rune.replace_title")
-
-
-func _on_rune_replace_requested(rune_id: String, candidates: Array) -> void:
-	if not hud.has_node("RuneReplace"):
-		return
-	var panel: Panel = hud.get_node("RuneReplace")
-	panel.visible = true
-	if hud.has_node("RuneReplace/Hint"):
-		hud.get_node("RuneReplace/Hint").text = Loc.t("rune.replace_hint") + " → " + Loc.t("rune.%s" % rune_id)
-	var list: VBoxContainer = hud.get_node("RuneReplace/List")
-	for c in list.get_children():
-		c.queue_free()
-	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
-	for cid in candidates:
-		var id_str := str(cid)
-		var b := Button.new()
-		var rank: int = int(player.runes.get_rank(id_str))
-		var effect_key := "rune.%s.effect" % id_str
-		var effect := Loc.t(effect_key) if Loc.has_key(effect_key) else ""
-		b.text = "%s %d阶 — %s" % [RuneCatalog.display_name(id_str), rank, effect]
-		var captured: String = id_str
-		b.pressed.connect(func(): _confirm_rune_replace(captured))
-		list.add_child(b)
-
-
-func _confirm_rune_replace(old_id: String) -> void:
-	if player:
-		player.confirm_rune_replace(old_id)
-	if hud.has_node("RuneReplace"):
-		hud.get_node("RuneReplace").visible = false
-
-
-func _cancel_rune_replace() -> void:
-	if player:
-		player.cancel_rune_replace()
-	if hud.has_node("RuneReplace"):
-		hud.get_node("RuneReplace").visible = false
 
 
 func _wire_quest_ui() -> void:
@@ -694,7 +646,7 @@ func _update_quest_hud() -> void:
 		if info.is_empty():
 			hud.get_node("QuestSummary").text = Loc.t("hud.quest_none")
 		else:
-			var line := Loc.t("hud.quest_progress", [str(info.get("name")), str(info.get("progress_text"))])
+			var line: String = Loc.t("hud.quest_progress", [str(info.get("name")), str(info.get("progress_text"))])
 			if bool(info.get("complete", false)):
 				line += " " + Loc.t("hud.quest_done")
 			hud.get_node("QuestSummary").text = line
@@ -714,9 +666,9 @@ func _refresh_quest_panel() -> void:
 	var mat_parts: PackedStringArray = []
 	for mid in mats.keys():
 		mat_parts.append("%s x%d" % [MaterialCatalog.display_name(str(mid)), int(mats[mid])])
-	var mat_text := Loc.t("quest.reward_mats_none") if mat_parts.is_empty() else ", ".join(mat_parts)
-	var reward := Loc.t("quest.reward", [int(info.get("reward_gold", 0)), mat_text])
-	var done_mark := " " + Loc.t("hud.quest_done") if bool(info.get("complete", false)) else ""
+	var mat_text: String = Loc.t("quest.reward_mats_none") if mat_parts.is_empty() else ", ".join(mat_parts)
+	var reward: String = Loc.t("quest.reward", [int(info.get("reward_gold", 0)), mat_text])
+	var done_mark: String = " " + Loc.t("hud.quest_done") if bool(info.get("complete", false)) else ""
 	body.text = Loc.t("hud.quest_detail", [
 		str(info.get("name")), str(info.get("progress_text")), done_mark, str(info.get("desc")), reward,
 	])
@@ -832,21 +784,21 @@ func _update_hud() -> void:
 	if hud.has_node("StatsBar/HpText"):
 		hud.get_node("StatsBar/HpText").text = Loc.t("hud.hp", [int(round(player.hp)), int(round(player.max_hp))])
 	if hud.has_node("StatsBar/AttrText"):
-		var mind_txt := Loc.t("hud.mind", [MetaProgress.mind_level])
-		var value_txt := Loc.t("hud.mind_value", [MetaProgress.mind_value])
-		var special_txt := Loc.t("hud.special_mind_yes") if RunSession.special_mind else Loc.t("hud.special_mind_no")
+		var mind_txt: String = Loc.t("hud.mind", [MetaProgress.mind_level])
+		var value_txt: String = Loc.t("hud.mind_value", [MetaProgress.mind_value])
+		var special_txt: String = Loc.t("hud.special_mind_yes") if RunSession.special_mind else Loc.t("hud.special_mind_no")
 		hud.get_node("StatsBar/AttrText").text = "%s | %s | %s" % [mind_txt, value_txt, special_txt]
 	if hud.has_node("BagCountLabel"):
-		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.MAX_SLOTS])
-	var rune_lines: PackedStringArray = player.runes.describe()
-	var rune_text := Loc.t("hud.runes_none") if rune_lines.is_empty() else "\n".join(rune_lines)
+		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.max_slots()])
+	var learned_n := MetaProgress.learned_runes.size()
+	var rune_text: String = Loc.t("hud.skills_learned", [learned_n]) if learned_n > 0 else Loc.t("hud.runes_none")
 	if hud.has_node("RunePanel/RuneScroll/RuneLabel"):
 		hud.get_node("RunePanel/RuneScroll/RuneLabel").text = rune_text
 		if hud.has_node("RunePanel/RuneTitle"):
-			hud.get_node("RunePanel/RuneTitle").text = Loc.t("hud.runes")
+			hud.get_node("RunePanel/RuneTitle").text = Loc.t("hud.skills")
 	elif hud.has_node("RuneLabel"):
-		hud.get_node("RuneLabel").text = Loc.t("hud.runes") + "：\n" + rune_text
-	var bname := Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
+		hud.get_node("RuneLabel").text = Loc.t("hud.skills") + "：\n" + rune_text
+	var bname: String = Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
 	var rname := RegionCatalog.display_name(_current_region) if _current_region != "" else "—"
 	if hud.has_node("TopLeft/FloorLabel"):
 		hud.get_node("TopLeft/FloorLabel").text = "%s | %s | %s" % [
@@ -903,7 +855,7 @@ func _finish_success() -> void:
 	var mats: PackedStringArray = player.inventory.describe_contents()
 	lines.append_array(mats if not mats.is_empty() else PackedStringArray([Loc.t("extract.empty")]))
 	lines.append("")
-	lines.append(Loc.t("extract.runes_lost"))
+	lines.append(Loc.t("extract.brand_lost"))
 	if RunSession.special_mind:
 		lines.append(Loc.t("extract.special_mind_lost"))
 	if q == "ok":
@@ -913,7 +865,6 @@ func _finish_success() -> void:
 		lines.append(Loc.t("extract.quest_fail"))
 	body.text = "\n".join(lines)
 	player.inventory.clear()
-	player.runes.clear()
 	RunSession.clear()
 
 
@@ -967,7 +918,6 @@ func _confirm_death_keep() -> void:
 	MetaProgress.merge_inventory_into_stash(kept)
 	if player:
 		player.inventory.clear()
-		player.runes.clear()
 	RunSession.clear()
 	_back_to_hub()
 

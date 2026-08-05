@@ -73,13 +73,11 @@ func _on_interact(by: Node) -> void:
 				)
 			AudioManager.sfx_pickup()
 			call_deferred("queue_free")
-		elif by.has_method("show_toast"):
-			by.show_toast(Loc.t("bag.full"), PitEventLog.Category.WARN)
+		## toast 已在 try_add_material 内处理满格/超重
 	elif drop_type == DropType.RUNE:
 		if not by.has_method("try_add_rune"):
 			return
 		var result: String = by.try_add_rune(drop_id)
-		var rune_name := RuneCatalog.display_name(drop_id)
 		if result == "ok":
 			if by.has_method("show_toast"):
 				by.show_toast(
@@ -89,17 +87,8 @@ func _on_interact(by: Node) -> void:
 				)
 			AudioManager.sfx_pickup()
 			call_deferred("queue_free")
-		elif result == "upgraded":
-			if by.has_method("show_toast"):
-				by.show_toast(
-					Loc.t("rune.upgraded", [rune_name, by.runes.get_rank(drop_id)]),
-					PitEventLog.Category.RUNE,
-					RuneCatalog.tier_color(drop_id)
-				)
-			AudioManager.sfx_pickup()
-			call_deferred("queue_free")
-		elif result == "full" or result == "max_rank":
-			if by.has_method("request_rune_replace"):
-				by.request_rune_replace(self, drop_id)
-			elif by.has_method("show_toast"):
-				by.show_toast(Loc.t("rune.slots_full"), PitEventLog.Category.WARN)
+		elif by.has_method("show_toast"):
+			if result == "full":
+				by.show_toast(Loc.t("bag.full"), PitEventLog.Category.WARN)
+			elif result == "overweight":
+				by.show_toast(Loc.t("bag.overweight"), PitEventLog.Category.WARN)

@@ -7,6 +7,7 @@ const Equipment = preload("res://scripts/meta/equipment.gd")
 const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
+const SheetHostScript = preload("res://scripts/ui/character_sheet_host.gd")
 
 @onready var world: Node2D = $World
 @onready var entities: Node2D = $World/Entities
@@ -22,6 +23,7 @@ const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
 @onready var prompt_label: Label = $HUD/PromptLabel
 
 var player: CharacterBody2D = null
+var sheet_host: CanvasLayer = null
 var _mode: String = ""
 var _selected_quest: String = ""
 
@@ -29,6 +31,7 @@ var _selected_quest: String = ""
 func _ready() -> void:
 	_build_hub()
 	_spawn_player()
+	_ensure_sheet_host()
 	panel.visible = false
 	stash_grid.visible = false
 	btn_close.pressed.connect(_close_panel)
@@ -44,10 +47,39 @@ func _ready() -> void:
 	AudioManager.play_bgm()
 
 
+func _ensure_sheet_host() -> void:
+	if sheet_host != null:
+		return
+	sheet_host = CanvasLayer.new()
+	sheet_host.set_script(SheetHostScript)
+	add_child(sheet_host)
+	if player:
+		sheet_host.bind_player(player, true)
+	sheet_host.panel_closed.connect(func():
+		if player:
+			player.input_locked = false
+	)
+
+
+func _input(event: InputEvent) -> void:
+	if event.is_action_pressed("toggle_bag"):
+		if sheet_host:
+			sheet_host.toggle_bag()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("toggle_stats"):
+		if sheet_host:
+			sheet_host.toggle_stats()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("toggle_skills"):
+		if sheet_host:
+			sheet_host.toggle_skills()
+		get_viewport().set_input_as_handled()
+
+
 func _process(_delta: float) -> void:
 	if player == null:
 		return
-	if panel.visible:
+	if panel.visible or (sheet_host and sheet_host.any_open()):
 		prompt_label.text = ""
 		return
 	prompt_label.text = player.get_interact_prompt()
@@ -117,16 +149,26 @@ func _spawn_player() -> void:
 	entities.add_child(player)
 	player.global_position = Vector2(0, 40)
 	player.combat_enabled = false
+	player.apply_meta_loadout("iron")
 	player.toast.connect(func(t): _toast(t))
+	if sheet_host:
+		sheet_host.bind_player(player, true)
 
 
 func _refresh_status() -> void:
 	hud.get_node("StatusLabel").text = "%s | %s | %s | %s" % [
 		Loc.t("hud.mind", [MetaProgress.mind_level]),
-		Loc.t("hud.mind_value", [MetaProgress.mind_value]),
+		Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]),
 		Loc.t("hud.gold", [MetaProgress.gold]),
 		_quest_status_text(),
 	]
+	if sheet_host and sheet_host.any_open():
+		if sheet_host.stats_panel.visible:
+			sheet_host.stats_panel.refresh()
+		if sheet_host.bag_panel.visible:
+			sheet_host.bag_panel.refresh()
+		if sheet_host.skills_panel.visible:
+			sheet_host.skills_panel.refresh()
 
 
 func _quest_status_text() -> String:
@@ -156,7 +198,7 @@ func _quest_reward_line(def: Dictionary) -> String:
 	var mat_parts: PackedStringArray = []
 	for mid in mats.keys():
 		mat_parts.append("%s x%d" % [MaterialCatalog.display_name(str(mid)), int(mats[mid])])
-	var mat_text := Loc.t("quest.reward_mats_none") if mat_parts.is_empty() else ", ".join(mat_parts)
+	var mat_text: String = Loc.t("quest.reward_mats_none") if mat_parts.is_empty() else ", ".join(mat_parts)
 	return Loc.t("quest.reward", [gold, mat_text])
 
 

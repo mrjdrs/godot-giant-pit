@@ -115,25 +115,19 @@ def gen_panel_stats() -> None:
     draw_panel_frame(img)
     # title 「属性」 as block pattern
     draw_title_bar(img, [(0, 6), (8, 6), (16, 4), (22, 6)])
-    # left list area
+    # left: clean text list area (no progress bars — labels overlaid at runtime)
     fill_rect(img, 12, 32, 180, 196, PANEL)
     outline_rect(img, 12, 32, 180, 196, EDGE)
-    # section: resources
-    rows = [
-        (40, RED2), (56, MIND2), (72, GOLD), (96, GREEN), (112, BRAND), (128, METAL), (144, ALCH),
-        (168, GRAY), (184, GRAY2), (200, GRAY),  # placeholder rows
-    ]
-    for y, c in rows:
-        draw_label_row(img, 20, y, c, 140)
-    # right equip area
-    fill_rect(img, 200, 32, 108, 160, PANEL)
-    outline_rect(img, 200, 32, 108, 160, GOLD)
-    fill_rect(img, 210, 40, 40, 8, GOLD)  # section label stub
-    for i, (sx, sy) in enumerate([(220, 56), (220, 100), (220, 144)]):
-        draw_slot(img, sx, sy, 32)
-        # slot type accent
-        cols = [METAL, WOOD, MIND]
-        fill_rect(img, sx + 8, sy + 8, 16, 16, cols[i])
+    # subtle row guides only (no colored bars)
+    for i in range(11):
+        y = 40 + i * 16
+        fill_rect(img, 18, y + 14, 168, 1, PANEL2)
+    # right equip area — empty box only; slot icons drawn by UI at runtime
+    fill_rect(img, 200, 32, 108, 196, PANEL)
+    outline_rect(img, 200, 32, 108, 196, GOLD)
+    for i in range(3):
+        y = 48 + i * 56
+        fill_rect(img, 208, y + 40, 92, 1, PANEL2)
     save(img, "ui/panels/panel_stats.png")
 
 

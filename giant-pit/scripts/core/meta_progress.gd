@@ -12,10 +12,11 @@ signal changed
 
 var mind_level: int = 1
 var mind_shards_banked: int = 0 ## 静室待吸收也可直接扣 stash
-var mind_value: int = 0 ## 可消耗念力值（传送）
+var mind_value: int = 0 ## 可消耗念力值（传送 / 学符文）
 var gold: int = 0
-var stash: Dictionary = {} ## mat_id -> count
+var stash: Dictionary = {} ## id -> count（材料 / 未学符文 / 特殊道具）
 var equipment: Dictionary = {}
+var learned_runes: Dictionary = {} ## rune_id -> true
 var active_quest_id: String = ""
 var intel: PackedStringArray = []
 var unlocked_warps: Array = [] ## ["warp_a", ...]
@@ -24,6 +25,22 @@ const WARP_COST_ENTER := 15
 const WARP_COST_TRAVEL := 10
 const SHARD_TO_VALUE := 5
 const CORE_TO_VALUE := 25
+const MIND_VALUE_BASE := 40
+const MIND_VALUE_PER_LEVEL := 10
+
+
+func mind_value_max() -> int:
+	return MIND_VALUE_BASE + mind_level * MIND_VALUE_PER_LEVEL
+
+
+func has_learned(rune_id: String) -> bool:
+	return bool(learned_runes.get(rune_id, false))
+
+
+func mark_learned(rune_id: String) -> void:
+	learned_runes[rune_id] = true
+	changed.emit()
+	save_game()
 
 
 func _ready() -> void:
@@ -65,9 +82,41 @@ func consume_stash(costs: Dictionary) -> bool:
 
 func merge_inventory_into_stash(slots: Array) -> void:
 	for entry in slots:
-		if entry.get("type") != "mat":
+		var t := str(entry.get("type", ""))
+		if t != "mat" and t != "rune" and t != "item":
 			continue
 		add_stash(str(entry.get("id")), int(entry.get("count", 1)))
+
+
+func stash_as_entries(filter_kind: String = "") -> Array:
+	## filter_kind: "" | "mat" | "rune" | "item" | "rune_skill" | "rune_attr"
+	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+	const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
+	var out: Array = []
+	var keys: Array = stash.keys()
+	keys.sort()
+	for id in keys:
+		var sid := str(id)
+		var count := int(stash[id])
+		if count <= 0:
+			continue
+		var entry_type := "mat"
+		if RuneCatalog.DEFS.has(sid):
+			entry_type = "rune"
+		elif ItemCatalog.ITEMS.has(sid):
+			entry_type = "item"
+		if filter_kind == "mat" and entry_type != "mat":
+			continue
+		if filter_kind == "item" and entry_type != "item":
+			continue
+		if filter_kind == "rune" and entry_type != "rune":
+			continue
+		if filter_kind == "rune_skill" and (entry_type != "rune" or not RuneCatalog.is_skill(sid)):
+			continue
+		if filter_kind == "rune_attr" and (entry_type != "rune" or not RuneCatalog.is_attr(sid)):
+			continue
+		out.append({"type": entry_type, "id": sid, "count": count, "rank": 1})
+	return out
 
 
 func total_equipment_bonuses() -> Dictionary:
@@ -269,9 +318,19 @@ func add_intel(text: String) -> void:
 
 
 func describe_stash() -> PackedStringArray:
+	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+	const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
 	var lines: PackedStringArray = []
 	for mid in stash.keys():
-		lines.append("%s x%d" % [MaterialCatalog.display_name(str(mid)), int(stash[mid])])
+		var sid := str(mid)
+		var name := sid
+		if MaterialCatalog.MATERIALS.has(sid):
+			name = MaterialCatalog.display_name(sid)
+		elif RuneCatalog.DEFS.has(sid):
+			name = RuneCatalog.display_name(sid)
+		elif ItemCatalog.ITEMS.has(sid):
+			name = ItemCatalog.display_name(sid)
+		lines.append("%s x%d" % [name, int(stash[mid])])
 	return lines
 
 
@@ -282,6 +341,7 @@ func to_dict() -> Dictionary:
 		"gold": gold,
 		"stash": stash,
 		"equipment": equipment,
+		"learned_runes": learned_runes,
 		"active_quest_id": active_quest_id,
 		"intel": Array(intel),
 		"unlocked_warps": unlocked_warps.duplicate(),
@@ -294,6 +354,9 @@ func from_dict(data: Dictionary) -> void:
 	gold = int(data.get("gold", 0))
 	stash = data.get("stash", {})
 	equipment = data.get("equipment", {})
+	learned_runes = data.get("learned_runes", {})
+	if typeof(learned_runes) != TYPE_DICTIONARY:
+		learned_runes = {}
 	active_quest_id = str(data.get("active_quest_id", ""))
 	intel = PackedStringArray(data.get("intel", []))
 	unlocked_warps = data.get("unlocked_warps", [])
@@ -314,8 +377,16 @@ func load_game() -> void:
 		_ensure_equipment()
 		## 新手赠礼，方便阶段 C 试玩
 		if stash.is_empty():
-			stash = {"mind_shard": 4, "mind_core": 1, "alchem_slag": 4, "beast_scale": 3, "glow_moss": 2}
-			mind_value = 20
+			stash = {
+				"mind_shard": 4,
+				"mind_core": 1,
+				"alchem_slag": 4,
+				"beast_scale": 3,
+				"glow_moss": 2,
+				"rune_s_chain": 1,
+				"item_bag_expand": 1,
+			}
+			mind_value = mind_value_max()
 		return
 	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
 	if f == null:

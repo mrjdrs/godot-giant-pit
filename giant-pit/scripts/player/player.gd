@@ -2,13 +2,15 @@ extends CharacterBody2D
 
 const HitstopUtil = preload("res://scripts/combat/hitstop.gd")
 const InventoryScript = preload("res://scripts/player/inventory.gd")
-const RuneLoadoutScript = preload("res://scripts/player/rune_loadout.gd")
+const CharacterStatsScript = preload("res://scripts/player/character_stats.gd")
+const SkillBookScript = preload("res://scripts/player/skill_book.gd")
 
 signal hp_changed(current: float, maximum: float)
 signal died
 signal toast(text: String, category: int, color: Color)
 signal loadout_changed
 signal inventory_changed
+signal stats_changed
 signal rune_replace_requested(rune_id: String, candidates: Array)
 signal interact_prompt_changed(text: String)
 
@@ -59,7 +61,8 @@ var _attack_reach: float = 1.0
 var max_hp: float = BASE_MAX_HP
 var hp: float = BASE_MAX_HP
 var inventory = InventoryScript.new()
-var runes = RuneLoadoutScript.new()
+var stats = CharacterStatsScript.new()
+var skills = SkillBookScript.new()
 var nearby_interactable: Node = null
 var nearby_interactables: Array = []
 var _nearby_focus: int = 0
@@ -68,8 +71,6 @@ var combat_enabled: bool = true
 var brand_quality: String = "iron"
 var equip_bonus: Dictionary = {"max_hp": 0.0, "defense": 0.0, "damage": 0.0}
 var _hurt_flash: float = 0.0
-var _pending_rune_pickup: Node = null
-var _pending_rune_id: String = ""
 var _last_prompt: String = ""
 
 
@@ -82,9 +83,10 @@ func _ready() -> void:
 	hitbox.disable()
 	_set_hitbox_size(Vector2(28, 18), Vector2(20, 0))
 	_apply_blade_visual()
-	runes.changed.connect(_on_runes_changed)
 	inventory.changed.connect(func(): inventory_changed.emit())
-	_refresh_stats_from_runes(false)
+	skills.changed.connect(_on_skills_changed)
+	MetaProgress.changed.connect(_on_meta_changed)
+	_refresh_character_stats(false)
 	hp_changed.emit(hp, max_hp)
 
 
@@ -167,18 +169,38 @@ func _process_roll(delta: float) -> void:
 		invincible = false
 	if roll_timer <= 0.0:
 		invincible = false
-		roll_cd_left = ROLL_COOLDOWN * runes.roll_cd_mult()
+		roll_cd_left = ROLL_COOLDOWN * _roll_cd_mult()
 		state = State.IDLE
 		velocity = Vector2.ZERO
 
 
 func _move_speed() -> float:
-	return BASE_MOVE_SPEED * runes.move_speed_mult()
+	return BASE_MOVE_SPEED
 
 
 func _damage_mult() -> float:
-	var brand: Dictionary = _brand_stats()
-	return runes.damage_mult() * float(brand.get("dmg", 1.0)) * (1.0 + float(equip_bonus.get("damage", 0.0)))
+	return 1.0
+
+
+func _roll_cd_mult() -> float:
+	if skills.has("rune_s_cloudstep"):
+		return 0.85
+	return 1.0
+
+
+func _light_damage_mult() -> float:
+	var m := 1.0
+	if skills.has("rune_s_chain"):
+		m += 0.10
+		if combo_step >= 2:
+			m += 0.05
+	return m
+
+
+func _heavy_damage_mult() -> float:
+	if skills.has("rune_s_quake"):
+		return 1.15
+	return 1.0
 
 
 func _brand_stats() -> Dictionary:
@@ -189,7 +211,11 @@ func _brand_stats() -> Dictionary:
 func apply_meta_loadout(p_brand: String = "iron") -> void:
 	brand_quality = p_brand
 	equip_bonus = MetaProgress.total_equipment_bonuses()
-	_refresh_stats_from_runes(false)
+	_refresh_character_stats(false)
+
+
+func carry_cap() -> float:
+	return stats.carry_cap
 
 
 func _update_facing_to_mouse() -> void:
@@ -231,11 +257,13 @@ func _start_light_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	attack_locked_facing = facing
 	state = State.ATTACK_LIGHT
 	combo_step = mini(combo_step + 1, 2)
-	_attack_spd = maxf(runes.attack_speed_mult(), 0.25)
-	_attack_reach = runes.reach_mult() * float(_brand_stats().get("reach", 1.0))
+	_attack_spd = 1.0
+	_attack_reach = float(_brand_stats().get("reach", 1.0))
 	var windup := LIGHT_WINDUP / _attack_spd
 	if combo_step == 2:
 		windup *= 0.75
+		if skills.has("rune_s_chain"):
+			windup *= 0.9
 	_set_hitbox_size(Vector2(36, 20) * _attack_reach, Vector2(26, 0) * _attack_reach)
 	blade_swing_deg = -55.0
 	_apply_blade_visual()
@@ -252,9 +280,9 @@ func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	state = State.ATTACK_HEAVY
 	combo_step = 0
 	combo_window = 0.0
-	_attack_spd = maxf(runes.attack_speed_mult(), 0.25)
-	_attack_reach = runes.reach_mult() * float(_brand_stats().get("reach", 1.0))
-	_attack_kb = HEAVY_KNOCKBACK * float(_brand_stats().get("heavy_kb", 1.0)) * runes.heavy_knockback_mult()
+	_attack_spd = 1.0
+	_attack_reach = float(_brand_stats().get("reach", 1.0))
+	_attack_kb = HEAVY_KNOCKBACK * float(_brand_stats().get("heavy_kb", 1.0))
 	_set_hitbox_size(Vector2(48, 28) * _attack_reach, Vector2(30, 0) * _attack_reach)
 	blade_swing_deg = -75.0
 	_apply_blade_visual()
@@ -270,7 +298,7 @@ func _tick_attack(delta: float) -> void:
 		return
 	match _attack_phase:
 		AttackPhase.LIGHT_WINDUP:
-			hitbox.enable(LIGHT_DAMAGE * _damage_mult(), LIGHT_KNOCKBACK, self)
+			hitbox.enable(LIGHT_DAMAGE * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK), LIGHT_KNOCKBACK, self)
 			blade_swing_deg = 45.0
 			_apply_blade_visual()
 			_attack_phase = AttackPhase.LIGHT_ACTIVE
@@ -290,7 +318,7 @@ func _tick_attack(delta: float) -> void:
 				combo_window = 0.28
 				state = State.IDLE
 		AttackPhase.HEAVY_WINDUP:
-			hitbox.enable(HEAVY_DAMAGE * _damage_mult() * runes.heavy_damage_mult(), _attack_kb, self)
+			hitbox.enable(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK), _attack_kb, self)
 			blade_swing_deg = 60.0
 			blade_sprite.scale = Vector2.ONE
 			_apply_blade_visual()
@@ -331,7 +359,7 @@ func _deferred_hit_fx() -> void:
 func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	if invincible or input_locked:
 		return
-	var mitigated: float = maxf(amount - float(equip_bonus.get("defense", 0.0)), 1.0)
+	var mitigated: float = maxf(amount - stats.pdef, 1.0)
 	hp = maxf(hp - mitigated, 0.0)
 	_hurt_flash = 0.2
 	hp_changed.emit(hp, max_hp)
@@ -354,11 +382,64 @@ func _die() -> void:
 
 
 func try_add_material(mat_id: String, count: int = 1) -> bool:
-	return inventory.add_material(mat_id, count)
+	var r := inventory.add_material(mat_id, count, carry_cap())
+	if r == "ok":
+		return true
+	if r == "full":
+		show_toast(Loc.t("bag.full"), 2)
+	elif r == "overweight":
+		show_toast(Loc.t("bag.overweight"), 2)
+	return false
 
 
 func try_add_rune(rune_id: String) -> String:
-	return runes.try_equip(rune_id)
+	return inventory.add_rune_as_item(rune_id, 1, carry_cap())
+
+
+func try_learn_rune(rune_id: String, from_stash: bool = false) -> String:
+	var r := skills.try_learn(rune_id, inventory if not from_stash else null, from_stash)
+	if r == "ok":
+		_refresh_character_stats(true)
+		loadout_changed.emit()
+	return r
+
+
+func show_toast(text: String, category: int = 3, color: Color = Color.TRANSPARENT) -> void:
+	toast.emit(text, category, color)
+
+
+func _on_skills_changed() -> void:
+	_refresh_character_stats(true)
+	loadout_changed.emit()
+
+
+func _on_meta_changed() -> void:
+	equip_bonus = MetaProgress.total_equipment_bonuses()
+	_refresh_character_stats(true)
+
+
+func _refresh_character_stats(keep_ratio: bool) -> void:
+	stats.set_context(brand_quality, equip_bonus, MetaProgress.learned_runes)
+	var ratio := 1.0
+	if keep_ratio and max_hp > 0.0:
+		ratio = hp / max_hp
+	max_hp = stats.max_hp
+	hp = clampf(max_hp * ratio, 1.0, max_hp) if keep_ratio else max_hp
+	hp_changed.emit(hp, max_hp)
+	stats_changed.emit()
+
+
+## 兼容旧接口（已废弃装配）
+func request_rune_replace(_pickup: Node, _rune_id: String) -> void:
+	show_toast(Loc.t("skill.learn_hint"))
+
+
+func confirm_rune_replace(_old_id: String) -> void:
+	pass
+
+
+func cancel_rune_replace() -> void:
+	pass
 
 
 func set_nearby_interactable(node: Node) -> void:
@@ -447,48 +528,3 @@ func _current_interact_prompt() -> String:
 	if nearby_interactables.size() > 1:
 		return Loc.t("hud.interact_multi", [base, _nearby_focus + 1, nearby_interactables.size()])
 	return base
-
-
-func show_toast(text: String, category: int = 3, color: Color = Color.TRANSPARENT) -> void:
-	toast.emit(text, category, color)
-
-
-func request_rune_replace(pickup: Node, rune_id: String) -> void:
-	_pending_rune_pickup = pickup
-	_pending_rune_id = rune_id
-	var candidates: Array = runes.ids_in_same_group(rune_id)
-	rune_replace_requested.emit(rune_id, candidates)
-	show_toast(Loc.t("rune.replace_hint"))
-
-
-func confirm_rune_replace(old_id: String) -> void:
-	if _pending_rune_id == "":
-		return
-	var r := runes.replace_rune(old_id, _pending_rune_id)
-	if r == "ok":
-		const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
-		show_toast(Loc.t("rune.replaced", [RuneCatalog.display_name(_pending_rune_id)]))
-		AudioManager.sfx_pickup()
-		if is_instance_valid(_pending_rune_pickup):
-			_pending_rune_pickup.queue_free()
-	_pending_rune_pickup = null
-	_pending_rune_id = ""
-
-
-func cancel_rune_replace() -> void:
-	_pending_rune_pickup = null
-	_pending_rune_id = ""
-
-
-func _on_runes_changed() -> void:
-	_refresh_stats_from_runes(true)
-	loadout_changed.emit()
-
-
-func _refresh_stats_from_runes(keep_ratio: bool) -> void:
-	var ratio := 1.0
-	if keep_ratio and max_hp > 0.0:
-		ratio = hp / max_hp
-	max_hp = BASE_MAX_HP + runes.max_hp_bonus() + float(equip_bonus.get("max_hp", 0.0))
-	hp = clampf(max_hp * ratio, 1.0, max_hp) if keep_ratio else max_hp
-	hp_changed.emit(hp, max_hp)
