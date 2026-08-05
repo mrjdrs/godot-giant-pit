@@ -8,6 +8,8 @@ signal interacted(by: Node)
 
 var _done: bool = false
 var enabled: bool = true
+## Bumps on enter so a deferred exit clear cannot wipe a newer re-enter.
+var _overlap_gen: int = 0
 
 
 func _ready() -> void:
@@ -44,11 +46,27 @@ func _on_interact(_by: Node) -> void:
 
 func _on_body_entered(body: Node) -> void:
 	if body.is_in_group("player") and body.has_method("set_nearby_interactable"):
+		_overlap_gen += 1
 		body.set_nearby_interactable(self)
 
 
 func _on_body_exited(body: Node) -> void:
 	if body.is_in_group("player") and body.has_method("clear_nearby_interactable"):
+		## Defer + generation/overlap re-check to avoid boundary flicker during physics.
+		call_deferred("_deferred_clear_nearby", body, _overlap_gen)
+
+
+func _deferred_clear_nearby(body: Node, gen_at_exit: int) -> void:
+	if not is_instance_valid(body):
+		return
+	## Re-entered since this exit was queued — do not clear.
+	if gen_at_exit != _overlap_gen:
+		return
+	if monitoring:
+		for b in get_overlapping_bodies():
+			if b == body:
+				return
+	if body.has_method("clear_nearby_interactable"):
 		body.clear_nearby_interactable(self)
 
 

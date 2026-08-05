@@ -30,6 +30,7 @@ var _burn_dps: float = 0.0
 var _player: Node2D = null
 var _hp_bg: Polygon2D = null
 var _hp_fill: Polygon2D = null
+var _dying: bool = false
 const HP_BAR_W := 28.0
 const HP_BAR_H := 4.0
 
@@ -174,6 +175,22 @@ func _on_hurt(hitbox: Area2D) -> void:
 
 
 func _die() -> void:
+	## Never add_child/queue_free physics bodies inside a physics/area callback —
+	## that can infinite-loop the physics flush and balloon memory (~40MB/s).
+	if _dying:
+		return
+	_dying = true
+	set_physics_process(false)
+	velocity = Vector2.ZERO
+	if hurtbox != null:
+		hurtbox.invincible = true
+		hurtbox.set_deferred("monitorable", false)
+	call_deferred("_finish_die")
+
+
+func _finish_die() -> void:
+	if not is_instance_valid(self):
+		return
 	if quest_scale or is_in_group("scale_rock"):
 		RunSession.kill_scale += 1
 	if is_boss:
@@ -181,7 +198,6 @@ func _die() -> void:
 	var meta := {"warp": warp_unlock_id, "is_boss": is_boss}
 	died_with_id.emit(enemy_id, meta)
 	if warp_unlock_id != "":
-		## 通知场景激活传送点
 		var tree := get_tree()
 		if tree != null:
 			tree.call_group("pit_floor", "on_warp_guard_killed", warp_unlock_id)

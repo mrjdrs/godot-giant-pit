@@ -72,7 +72,7 @@ func _on_interact(by: Node) -> void:
 					MaterialCatalog.tier_color(drop_id)
 				)
 			AudioManager.sfx_pickup()
-			queue_free()
+			call_deferred("queue_free")
 		elif by.has_method("show_toast"):
 			by.show_toast(Loc.t("bag.full"), PitEventLog.Category.WARN)
 	elif drop_type == DropType.RUNE:
@@ -88,7 +88,7 @@ func _on_interact(by: Node) -> void:
 					RuneCatalog.tier_color(drop_id)
 				)
 			AudioManager.sfx_pickup()
-			queue_free()
+			call_deferred("queue_free")
 		elif result == "upgraded":
 			if by.has_method("show_toast"):
 				by.show_toast(
@@ -97,7 +97,7 @@ func _on_interact(by: Node) -> void:
 					RuneCatalog.tier_color(drop_id)
 				)
 			AudioManager.sfx_pickup()
-			queue_free()
+			call_deferred("queue_free")
 		elif result == "full" or result == "max_rank":
 			if by.has_method("request_rune_replace"):
 				by.request_rune_replace(self, drop_id)

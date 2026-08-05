@@ -39,7 +39,7 @@ func _on_interact(by: Node) -> void:
 					PitEventLog.Category.PICKUP,
 					MaterialCatalog.tier_color(content_id)
 				)
-				queue_free()
+				call_deferred("queue_free")
 			else:
 				_done = false
 				enabled = true
@@ -49,7 +49,7 @@ func _on_interact(by: Node) -> void:
 			var result: String = by.try_add_rune(content_id)
 			_handle_rune_result(by, result)
 			if result == "ok" or result == "upgraded":
-				queue_free()
+				call_deferred("queue_free")
 			else:
 				_done = false
 				enabled = true

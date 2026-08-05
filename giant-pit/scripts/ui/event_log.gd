@@ -57,10 +57,14 @@ func push(text: String, category: int = Category.SYSTEM, color_override: Color =
 	label.add_theme_color_override("font_color", col)
 	label.modulate.a = 0.0
 	_list.add_child(label)
-	while _list.get_child_count() > MAX_LINES:
+	## remove_child first: queue_free alone does not lower get_child_count until frame end.
+	var guard := 0
+	while _list.get_child_count() > MAX_LINES and guard < 64:
 		var old: Node = _list.get_child(0)
+		_list.remove_child(old)
 		old.queue_free()
-	var tw := create_tween()
+		guard += 1
+	var tw := label.create_tween()
 	tw.tween_property(label, "modulate:a", 1.0, 0.12)
 	tw.tween_interval(FADE_SEC)
 	tw.tween_property(label, "modulate:a", 0.35, 0.8)

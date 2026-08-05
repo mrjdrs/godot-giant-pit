@@ -8,7 +8,12 @@ static func freeze(tree: SceneTree, duration: float = 0.06) -> void:
 		return
 	_busy = true
 	var previous := Engine.time_scale
+	## If somehow invoked mid-physics, still avoid stacking broken scales.
+	if previous < 0.99:
+		previous = 1.0
 	Engine.time_scale = 0.05
-	await tree.create_timer(duration, true, false, true).timeout
-	Engine.time_scale = previous
-	_busy = false
+	var timer := tree.create_timer(duration, true, false, true)
+	timer.timeout.connect(func() -> void:
+		Engine.time_scale = previous
+		_busy = false
+	, CONNECT_ONE_SHOT)

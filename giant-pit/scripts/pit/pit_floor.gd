@@ -38,6 +38,8 @@ var _death_wired: bool = false
 var _bag_open: bool = false
 var _quest_open: bool = false
 var _warp_menu_from: String = ""
+var _minimap_dirty: bool = false
+var _last_minimap_tile: Vector2i = Vector2i(-99999, -99999)
 
 
 func _ready() -> void:
@@ -75,7 +77,6 @@ func _process(_delta: float) -> void:
 	if player == null or _run_over:
 		return
 	_update_exploration()
-	_update_hud()
 
 
 func _input(event: InputEvent) -> void:
@@ -176,7 +177,7 @@ func _build_terrain() -> void:
 		cs.z_index = -3
 		ground.add_child(cs)
 
-	## 墙：不可走邻接
+	## 墙：不可走邻接。碰撞合并到单个 StaticBody2D + 矩形合并，避免上千独立刚体。
 	var dirs := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
 	var wall_done: Dictionary = {}
 	for g in _walkable.keys():
@@ -184,30 +185,99 @@ func _build_terrain() -> void:
 			var n: Vector2i = g + d
 			if _walkable.has(n):
 				continue
-			if wall_done.has(n):
-				continue
 			wall_done[n] = true
-			var rid2 := str(_region_of.get(g, RegionCatalog.REGION_A))
-			var wpath: String = str(RegionCatalog.WALL_TILES.get(rid2, "res://assets/tiles/pit_wall/tile_wall.png"))
-			_make_wall_tile(walls, n, tile, wpath)
+	var wall_body := StaticBody2D.new()
+	wall_body.name = "WallCollision"
+	wall_body.collision_layer = 1
+	wall_body.collision_mask = 0
+	walls.add_child(wall_body)
+	var wall_visuals := Node2D.new()
+	wall_visuals.name = "WallVisuals"
+	walls.add_child(wall_visuals)
+	var wall_tex_cache: Dictionary = {}
+	for n in wall_done.keys():
+		var rid2 := str(_region_of.get(n, _region_of.get(n + Vector2i.LEFT, RegionCatalog.REGION_A)))
+		## Prefer region of an adjacent walkable tile for texture choice.
+		for d2 in dirs:
+			var neighbor: Vector2i = n + d2
+			if _walkable.has(neighbor):
+				rid2 = str(_region_of.get(neighbor, RegionCatalog.REGION_A))
+				break
+		var wpath: String = str(RegionCatalog.WALL_TILES.get(rid2, "res://assets/tiles/pit_wall/tile_wall.png"))
+		_make_wall_visual(wall_visuals, n, tile, wpath, wall_tex_cache)
+	var merged_rects: Array = _merge_wall_rects(wall_done.keys())
+	for rect_i in merged_rects:
+		var r: Rect2i = rect_i
+		var shape := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = Vector2(r.size.x * tile, r.size.y * tile)
+		shape.shape = rect
+		shape.position = Vector2((r.position.x + r.size.x * 0.5) * tile, (r.position.y + r.size.y * 0.5) * tile)
+		wall_body.add_child(shape)
 
 
-func _make_wall_tile(parent: Node2D, g: Vector2i, tile: int, tex_path: String) -> void:
-	var body := StaticBody2D.new()
-	body.collision_layer = 1
-	body.collision_mask = 0
-	body.position = Vector2((g.x + 0.5) * tile, (g.y + 0.5) * tile)
-	var shape := CollisionShape2D.new()
-	var rect := RectangleShape2D.new()
-	rect.size = Vector2(tile, tile)
-	shape.shape = rect
-	body.add_child(shape)
+func _merge_wall_rects(tiles: Array) -> Array:
+	## Greedy row-span merge, then vertical merge of identical spans.
+	var by_y: Dictionary = {}
+	for t in tiles:
+		var p: Vector2i = t
+		if not by_y.has(p.y):
+			by_y[p.y] = []
+		by_y[p.y].append(p.x)
+	var row_spans: Array = [] ## {y, x0, x1} inclusive
+	var ys: Array = by_y.keys()
+	ys.sort()
+	for y in ys:
+		var xs: Array = by_y[y]
+		xs.sort()
+		var start: int = xs[0]
+		var prev: int = xs[0]
+		for i in range(1, xs.size()):
+			var x: int = xs[i]
+			if x == prev + 1:
+				prev = x
+				continue
+			row_spans.append({"y": y, "x0": start, "x1": prev})
+			start = x
+			prev = x
+		row_spans.append({"y": y, "x0": start, "x1": prev})
+	var used: Dictionary = {}
+	var out: Array = []
+	for i in row_spans.size():
+		if used.has(i):
+			continue
+		var span: Dictionary = row_spans[i]
+		var y0: int = int(span.y)
+		var y1: int = y0
+		var x0: int = int(span.x0)
+		var x1: int = int(span.x1)
+		used[i] = true
+		var grow := true
+		while grow:
+			grow = false
+			var next_y := y1 + 1
+			for j in row_spans.size():
+				if used.has(j):
+					continue
+				var s2: Dictionary = row_spans[j]
+				if int(s2.y) == next_y and int(s2.x0) == x0 and int(s2.x1) == x1:
+					used[j] = true
+					y1 = next_y
+					grow = true
+					break
+		out.append(Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+	return out
+
+
+func _make_wall_visual(visuals: Node2D, g: Vector2i, tile: int, tex_path: String, tex_cache: Dictionary) -> void:
 	var spr := Sprite2D.new()
 	if ResourceLoader.exists(tex_path):
-		spr.texture = load(tex_path)
+		if not tex_cache.has(tex_path):
+			tex_cache[tex_path] = load(tex_path)
+		spr.texture = tex_cache[tex_path]
 	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	body.add_child(spr)
-	parent.add_child(body)
+	spr.position = Vector2((g.x + 0.5) * tile, (g.y + 0.5) * tile)
+	visuals.add_child(spr)
 
 
 func _build_chunk_fog() -> void:
@@ -387,6 +457,7 @@ func _on_enemy_killed(enemy_id: String, meta: Dictionary) -> void:
 	elif enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
 		text = Loc.t("feed.kill_elite", [display])
 	_push_feed(text, category)
+	_update_quest_hud()
 
 
 func _update_exploration() -> void:
@@ -398,7 +469,9 @@ func _update_exploration() -> void:
 	if rid != "" and rid != _current_region:
 		_current_region = rid
 		_show_region_banner(rid)
-		_refresh_minimap()
+		_update_hud()
+		_minimap_dirty = true
+	_flush_minimap_if_needed(g)
 
 
 func _reveal_around(pos: Vector2) -> void:
@@ -415,12 +488,17 @@ func _reveal_chunk(ck: Vector2i) -> void:
 	_explored_chunks[ck] = true
 	if _fog_chunks.has(ck):
 		var fog: Polygon2D = _fog_chunks[ck]
-		var tw := create_tween()
-		tw.tween_property(fog, "modulate:a", 0.0, 0.2)
-		tw.finished.connect(func():
-			if is_instance_valid(fog):
-				fog.visible = false
-		)
+		_fog_chunks.erase(ck)
+		if is_instance_valid(fog):
+			fog.queue_free()
+	_minimap_dirty = true
+
+
+func _flush_minimap_if_needed(player_tile: Vector2i) -> void:
+	if not _minimap_dirty and player_tile == _last_minimap_tile:
+		return
+	_last_minimap_tile = player_tile
+	_minimap_dirty = false
 	_refresh_minimap()
 
 
@@ -442,12 +520,19 @@ func _setup_hud() -> void:
 		hud.get_node("HintLabel").text = Loc.t("hint.pit_floor")
 	if hud.has_node("BagBtn"):
 		hud.get_node("BagBtn").text = Loc.t("hud.bag_btn")
+	if player and not player.hp_changed.is_connected(_on_player_hp_changed):
+		player.hp_changed.connect(_on_player_hp_changed)
 	if player and player.inventory and not player.inventory.changed.is_connected(_on_inventory_changed):
 		player.inventory.changed.connect(_on_inventory_changed)
 	if player and player.runes and not player.runes.changed.is_connected(_on_runes_changed):
 		player.runes.changed.connect(_on_runes_changed)
+	if player and not player.interact_prompt_changed.is_connected(_on_interact_prompt_changed):
+		player.interact_prompt_changed.connect(_on_interact_prompt_changed)
+	if not MetaProgress.changed.is_connected(_on_meta_progress_changed):
+		MetaProgress.changed.connect(_on_meta_progress_changed)
 	_refresh_bag_grid()
 	_update_hud()
+	_on_interact_prompt_changed(player.get_interact_prompt())
 
 
 func _on_inventory_changed() -> void:
@@ -457,6 +542,19 @@ func _on_inventory_changed() -> void:
 
 func _on_runes_changed() -> void:
 	_update_hud()
+
+
+func _on_player_hp_changed(_current: float, _maximum: float) -> void:
+	_update_hud()
+
+
+func _on_meta_progress_changed() -> void:
+	_update_hud()
+
+
+func _on_interact_prompt_changed(text: String) -> void:
+	if hud.has_node("PromptLabel"):
+		hud.get_node("PromptLabel").text = text
 
 
 func _refresh_bag_grid() -> void:
@@ -674,6 +772,9 @@ func _confirm_warp_travel(to_id: String) -> void:
 	if _markers.has(to_id) and player:
 		player.global_position = _markers[to_id]
 		_reveal_around(player.global_position)
+		_minimap_dirty = true
+		_last_minimap_tile = Vector2i(-99999, -99999)
+		_flush_minimap_if_needed(Floor1Generator.world_to_tile(player.global_position))
 		player.show_toast(Loc.t("warp.traveled", [Loc.t("warp.%s" % to_id)]), PitEventLog.Category.SYSTEM)
 	_close_warp_menu()
 
@@ -745,7 +846,6 @@ func _update_hud() -> void:
 			hud.get_node("RunePanel/RuneTitle").text = Loc.t("hud.runes")
 	elif hud.has_node("RuneLabel"):
 		hud.get_node("RuneLabel").text = Loc.t("hud.runes") + "：\n" + rune_text
-	hud.get_node("PromptLabel").text = player.get_interact_prompt()
 	var bname := Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
 	var rname := RegionCatalog.display_name(_current_region) if _current_region != "" else "—"
 	if hud.has_node("TopLeft/FloorLabel"):
@@ -761,7 +861,6 @@ func _update_hud() -> void:
 			Loc.t("hud.brand", [bname]),
 		]
 	_update_quest_hud()
-	_refresh_minimap()
 
 
 func _on_extract(_by: Node) -> void:
@@ -774,6 +873,7 @@ func _on_player_died() -> void:
 
 func _on_toast(text: String, category: int = PitEventLog.Category.SYSTEM, color: Color = Color.TRANSPARENT) -> void:
 	_push_feed(text, category, color)
+	_update_quest_hud()
 
 
 func _push_feed(text: String, category: int = PitEventLog.Category.SYSTEM, color: Color = Color.TRANSPARENT) -> void:

@@ -70,19 +70,19 @@ func _draw() -> void:
 	var sy := inner.size.y / float(_map_h)
 
 	var region_of: Dictionary = _map.get("region_of", {})
-	var walkable: Dictionary = _map.get("walkable", {})
-	## 以 chunk 为单位画已探索
-	var drawn: Dictionary = {}
-	for g in walkable.keys():
-		var ck := Floor1Generator.chunk_of_tile(g)
-		if not _explored.has(ck):
-			continue
-		if drawn.has(g):
-			continue
-		drawn[g] = true
-		var rid := str(region_of.get(g, RegionCatalog.REGION_A))
+	## 按已探索 chunk 绘制（O(已探索块数)，避免每帧遍历全部可走格子）
+	var chunk_sz := maxf(sx * float(_chunk), 1.0)
+	var chunk_sy := maxf(sy * float(_chunk), 1.0)
+	for ck in _explored.keys():
+		var origin := Vector2i(ck.x * _chunk, ck.y * _chunk)
+		var rid := str(region_of.get(origin, RegionCatalog.REGION_A))
 		var col: Color = RegionCatalog.MINIMAP_COLORS.get(rid, Color(0.3, 0.3, 0.3, 1))
-		var r := Rect2(inner.position.x + float(g.x) * sx, inner.position.y + float(g.y) * sy, maxf(sx, 1.0), maxf(sy, 1.0))
+		var r := Rect2(
+			inner.position.x + float(origin.x) * sx,
+			inner.position.y + float(origin.y) * sy,
+			chunk_sz,
+			chunk_sy
+		)
 		draw_rect(r, col)
 
 	## 玩家

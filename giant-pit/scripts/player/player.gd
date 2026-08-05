@@ -10,8 +10,10 @@ signal toast(text: String, category: int, color: Color)
 signal loadout_changed
 signal inventory_changed
 signal rune_replace_requested(rune_id: String, candidates: Array)
+signal interact_prompt_changed(text: String)
 
 enum State { IDLE, MOVE, ATTACK_LIGHT, ATTACK_HEAVY, ROLL }
+enum AttackPhase { NONE, LIGHT_WINDUP, LIGHT_ACTIVE, LIGHT_RECOVERY, HEAVY_WINDUP, HEAVY_ACTIVE, HEAVY_RECOVERY }
 
 const BASE_MOVE_SPEED := 140.0
 const BASE_MAX_HP := 100.0
@@ -48,6 +50,11 @@ var attack_locked_facing: Vector2 = Vector2.RIGHT
 var combo_step: int = 0
 var combo_window: float = 0.0
 var blade_swing_deg: float = 0.0
+var _attack_phase: AttackPhase = AttackPhase.NONE
+var _attack_timer: float = 0.0
+var _attack_spd: float = 1.0
+var _attack_kb: float = HEAVY_KNOCKBACK
+var _attack_reach: float = 1.0
 
 var max_hp: float = BASE_MAX_HP
 var hp: float = BASE_MAX_HP
@@ -63,6 +70,7 @@ var equip_bonus: Dictionary = {"max_hp": 0.0, "defense": 0.0, "damage": 0.0}
 var _hurt_flash: float = 0.0
 var _pending_rune_pickup: Node = null
 var _pending_rune_id: String = ""
+var _last_prompt: String = ""
 
 
 func _ready() -> void:
@@ -94,15 +102,7 @@ func _physics_process(delta: float) -> void:
 		if combo_window <= 0.0:
 			combo_step = 0
 
-	if not input_locked:
-		_handle_combat_input()
-		if Input.is_action_just_pressed("interact"):
-			_try_interact()
-		if Input.is_action_just_pressed("cycle_interact"):
-			_cycle_nearby(1)
-		if Input.is_action_just_pressed("toggle_bag"):
-			## 由场景 HUD 监听；这里也发 toast 提示留给 pit_floor
-			pass
+	_tick_attack(delta)
 
 	match state:
 		State.IDLE, State.MOVE:
@@ -114,6 +114,16 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 	_update_visuals()
+
+
+func _process(_delta: float) -> void:
+	if input_locked:
+		return
+	_handle_combat_input()
+	if Input.is_action_just_pressed("interact"):
+		_try_interact()
+	if Input.is_action_just_pressed("cycle_interact"):
+		_cycle_nearby(1)
 
 
 func _handle_combat_input() -> void:
@@ -204,6 +214,8 @@ func _start_roll() -> void:
 	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if input_dir.length_squared() > 0.01:
 		facing = input_dir.normalized()
+	_attack_phase = AttackPhase.NONE
+	_attack_timer = 0.0
 	state = State.ROLL
 	roll_timer = ROLL_DURATION
 	invincible = true
@@ -218,7 +230,17 @@ func _start_light_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 		_update_facing_to_mouse()
 	attack_locked_facing = facing
 	state = State.ATTACK_LIGHT
-	_play_light_attack()
+	combo_step = mini(combo_step + 1, 2)
+	_attack_spd = maxf(runes.attack_speed_mult(), 0.25)
+	_attack_reach = runes.reach_mult() * float(_brand_stats().get("reach", 1.0))
+	var windup := LIGHT_WINDUP / _attack_spd
+	if combo_step == 2:
+		windup *= 0.75
+	_set_hitbox_size(Vector2(36, 20) * _attack_reach, Vector2(26, 0) * _attack_reach)
+	blade_swing_deg = -55.0
+	_apply_blade_visual()
+	_attack_phase = AttackPhase.LIGHT_WINDUP
+	_attack_timer = windup
 
 
 func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
@@ -228,71 +250,64 @@ func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 		_update_facing_to_mouse()
 	attack_locked_facing = facing
 	state = State.ATTACK_HEAVY
-	_play_heavy_attack()
-
-
-func _play_light_attack() -> void:
-	combo_step = mini(combo_step + 1, 2)
-	var spd := runes.attack_speed_mult()
-	var windup := LIGHT_WINDUP / spd
-	var recovery := LIGHT_RECOVERY / spd
-	if combo_step == 2:
-		windup *= 0.75
-		recovery *= 0.85
-
-	var reach := runes.reach_mult() * float(_brand_stats().get("reach", 1.0))
-	_set_hitbox_size(Vector2(36, 20) * reach, Vector2(26, 0) * reach)
-	blade_swing_deg = -55.0
-	_apply_blade_visual()
-	await get_tree().create_timer(windup).timeout
-	if state != State.ATTACK_LIGHT:
-		return
-
-	hitbox.enable(LIGHT_DAMAGE * _damage_mult(), LIGHT_KNOCKBACK, self)
-	blade_swing_deg = 45.0
-	_apply_blade_visual()
-	await get_tree().create_timer(LIGHT_ACTIVE / spd).timeout
-	hitbox.disable()
-	if state != State.ATTACK_LIGHT:
-		return
-
-	await get_tree().create_timer(recovery).timeout
-	blade_swing_deg = 0.0
-	_apply_blade_visual()
-	if state == State.ATTACK_LIGHT:
-		combo_window = 0.28
-		state = State.IDLE
-
-
-func _play_heavy_attack() -> void:
 	combo_step = 0
 	combo_window = 0.0
-	var spd := runes.attack_speed_mult()
-	var reach := runes.reach_mult() * float(_brand_stats().get("reach", 1.0))
-	var kb := HEAVY_KNOCKBACK * float(_brand_stats().get("heavy_kb", 1.0)) * runes.heavy_knockback_mult()
-	_set_hitbox_size(Vector2(48, 28) * reach, Vector2(30, 0) * reach)
+	_attack_spd = maxf(runes.attack_speed_mult(), 0.25)
+	_attack_reach = runes.reach_mult() * float(_brand_stats().get("reach", 1.0))
+	_attack_kb = HEAVY_KNOCKBACK * float(_brand_stats().get("heavy_kb", 1.0)) * runes.heavy_knockback_mult()
+	_set_hitbox_size(Vector2(48, 28) * _attack_reach, Vector2(30, 0) * _attack_reach)
 	blade_swing_deg = -75.0
 	_apply_blade_visual()
-	var tween := create_tween()
-	tween.tween_property(blade_sprite, "scale", Vector2(1.15, 1.15), HEAVY_WINDUP / spd)
-	await get_tree().create_timer(HEAVY_WINDUP / spd).timeout
-	if state != State.ATTACK_HEAVY:
-		return
+	_attack_phase = AttackPhase.HEAVY_WINDUP
+	_attack_timer = HEAVY_WINDUP / _attack_spd
 
-	hitbox.enable(HEAVY_DAMAGE * _damage_mult() * runes.heavy_damage_mult(), kb, self)
-	blade_swing_deg = 60.0
-	blade_sprite.scale = Vector2.ONE
-	_apply_blade_visual()
-	await get_tree().create_timer(HEAVY_ACTIVE / spd).timeout
-	hitbox.disable()
-	if state != State.ATTACK_HEAVY:
-		return
 
-	await get_tree().create_timer(HEAVY_RECOVERY / spd).timeout
-	blade_swing_deg = 0.0
-	_apply_blade_visual()
-	if state == State.ATTACK_HEAVY:
-		state = State.IDLE
+func _tick_attack(delta: float) -> void:
+	if _attack_phase == AttackPhase.NONE:
+		return
+	_attack_timer -= delta
+	if _attack_timer > 0.0:
+		return
+	match _attack_phase:
+		AttackPhase.LIGHT_WINDUP:
+			hitbox.enable(LIGHT_DAMAGE * _damage_mult(), LIGHT_KNOCKBACK, self)
+			blade_swing_deg = 45.0
+			_apply_blade_visual()
+			_attack_phase = AttackPhase.LIGHT_ACTIVE
+			_attack_timer = LIGHT_ACTIVE / _attack_spd
+		AttackPhase.LIGHT_ACTIVE:
+			hitbox.disable()
+			var recovery := LIGHT_RECOVERY / _attack_spd
+			if combo_step == 2:
+				recovery *= 0.85
+			_attack_phase = AttackPhase.LIGHT_RECOVERY
+			_attack_timer = recovery
+		AttackPhase.LIGHT_RECOVERY:
+			blade_swing_deg = 0.0
+			_apply_blade_visual()
+			_attack_phase = AttackPhase.NONE
+			if state == State.ATTACK_LIGHT:
+				combo_window = 0.28
+				state = State.IDLE
+		AttackPhase.HEAVY_WINDUP:
+			hitbox.enable(HEAVY_DAMAGE * _damage_mult() * runes.heavy_damage_mult(), _attack_kb, self)
+			blade_swing_deg = 60.0
+			blade_sprite.scale = Vector2.ONE
+			_apply_blade_visual()
+			_attack_phase = AttackPhase.HEAVY_ACTIVE
+			_attack_timer = HEAVY_ACTIVE / _attack_spd
+		AttackPhase.HEAVY_ACTIVE:
+			hitbox.disable()
+			_attack_phase = AttackPhase.HEAVY_RECOVERY
+			_attack_timer = HEAVY_RECOVERY / _attack_spd
+		AttackPhase.HEAVY_RECOVERY:
+			blade_swing_deg = 0.0
+			_apply_blade_visual()
+			_attack_phase = AttackPhase.NONE
+			if state == State.ATTACK_HEAVY:
+				state = State.IDLE
+		_:
+			_attack_phase = AttackPhase.NONE
 
 
 func _set_hitbox_size(size: Vector2, offset: Vector2) -> void:
@@ -305,9 +320,12 @@ func _set_hitbox_size(size: Vector2, offset: Vector2) -> void:
 
 
 func _on_hitbox_hit(_hurtbox: Area2D) -> void:
+	call_deferred("_deferred_hit_fx")
+
+
+func _deferred_hit_fx() -> void:
 	HitstopUtil.freeze(get_tree(), 0.055)
 	AudioManager.sfx_blade()
-	print(Loc.t("sfx.blade_hit"))
 
 
 func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
@@ -327,6 +345,8 @@ func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 
 func _die() -> void:
 	input_locked = true
+	_attack_phase = AttackPhase.NONE
+	_attack_timer = 0.0
 	state = State.IDLE
 	velocity = Vector2.ZERO
 	hitbox.disable()
@@ -367,6 +387,7 @@ func _refresh_nearby_focus() -> void:
 	if nearby_interactables.is_empty():
 		_set_focus_node(null)
 		_nearby_focus = 0
+		_emit_prompt_if_changed("")
 		return
 	var idx := nearby_interactables.find(focused)
 	if idx >= 0:
@@ -374,6 +395,14 @@ func _refresh_nearby_focus() -> void:
 	else:
 		_nearby_focus = clampi(_nearby_focus, 0, nearby_interactables.size() - 1)
 	_set_focus_node(nearby_interactables[_nearby_focus])
+	_emit_prompt_if_changed(_current_interact_prompt())
+
+
+func _emit_prompt_if_changed(text: String) -> void:
+	if text == _last_prompt:
+		return
+	_last_prompt = text
+	interact_prompt_changed.emit(text)
 
 
 func _cycle_nearby(delta: int) -> void:
@@ -404,6 +433,10 @@ func _try_interact() -> void:
 
 func get_interact_prompt() -> String:
 	_refresh_nearby_focus()
+	return _current_interact_prompt()
+
+
+func _current_interact_prompt() -> String:
 	if nearby_interactable == null or not is_instance_valid(nearby_interactable):
 		return ""
 	if not nearby_interactable.has_method("can_interact") or not nearby_interactable.can_interact(self):
