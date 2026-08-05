@@ -1,9 +1,9 @@
-# Art Manifest — MVP 卡通像素素材包（v0.3 第 1 层三区域）
+# Art Manifest — MVP 卡通像素素材包（v0.4 UI + 三区域）
 
-> 规格：32×32 PNG，透明底，Nearest 友好  
+> 规格：图标/槽位 32×32；整面板 320×240；条带 128×8；透明底，Nearest 友好  
 > 风格：炼金奇幻 / 俯视卡通像素  
-> 地图：第 1 层大地图三区域 — 沉苔沼 / 折铜谷 / 盲灯廊 + BOSS 域  
-> 色板：苔绿 `#3A6B3A`｜铜橙 `#B87333`｜廊青灰 `#2A3540` + 灯金 `#E8A838`｜BOSS 紫石 + 赤金｜轮廓 `#2A1F18`
+> 地图：第 1 层三区域；UI：属性 / 背包 / 技能学习整面板  
+> 色板：土石褐 + 炼金青 `#3D8B7A` + 烙印金 `#E8A838`｜轮廓 `#2A1F18`
 
 ---
 
@@ -23,18 +23,18 @@
 | `brand_silver` | 银纹烙印 | `res://assets/brands/brand_silver.png` |
 | `brand_gold` | 金纹烙印 | `res://assets/brands/brand_gold.png` |
 
-## Runes（现行）
+## Runes（现行 · v0.4 技能型/属性型）
 
-| ID | 名称 | 路径 |
-|----|------|------|
-| `rune_tough` | 韧皮 | `res://assets/runes/rune_tough.png` |
-| `rune_swift` | 疾步 | `res://assets/runes/rune_swift.png` |
-| `rune_slash` | 迅斩 | `res://assets/runes/rune_slash.png` |
-| `rune_sidestep` | 侧身 | `res://assets/runes/rune_sidestep.png` |
-| `rune_edge` | 锋刃 | `res://assets/runes/rune_edge.png` |
-| `rune_reach` | 延斩 | `res://assets/runes/rune_reach.png` |
-| `rune_burn` | 灼痕 | `res://assets/runes/rune_burn.png` |
-| `rune_quake` | 崩山 | `res://assets/runes/rune_quake.png` |
+| ID | 名称 | 类型 | 路径 |
+|----|------|------|------|
+| `rune_s_chain` | 连环斩 | 技能 | `res://assets/runes/rune_s_chain.png` |
+| `rune_s_quake` | 崩山击 | 技能 | `res://assets/runes/rune_s_quake.png` |
+| `rune_s_cloudstep` | 踏云 | 技能 | `res://assets/runes/rune_s_cloudstep.png` |
+| `rune_s_ironwall` | 铁壁 | 技能 | `res://assets/runes/rune_s_ironwall.png` |
+| `rune_a_toughbone` | 韧骨 | 属性 | `res://assets/runes/rune_a_toughbone.png` |
+| `rune_a_heavyarm` | 沉臂 | 属性 | `res://assets/runes/rune_a_heavyarm.png` |
+| `rune_a_sharpeye` | 锐眼 | 属性 | `res://assets/runes/rune_a_sharpeye.png` |
+| `rune_a_cruel` | 狠劲 | 属性 | `res://assets/runes/rune_a_cruel.png` |
 
 ## Hub（现行）
 
@@ -218,12 +218,89 @@
 
 ---
 
-## Deprecated（v0.2 通用坑砖/旧怪，文件保留兼容）
-
-> 新内容请用上方分区资源。下列路径仍存在，勿作第 1 层大地图主素材。
+## UI — 整面板（320×240）
 
 | ID | 名称 | 路径 |
 |----|------|------|
+| `panel_stats` | 属性面板 | `res://assets/ui/panels/panel_stats.png` |
+| `panel_bag` | 背包面板 | `res://assets/ui/panels/panel_bag.png` |
+| `panel_skills` | 技能学习面板 | `res://assets/ui/panels/panel_skills.png` |
+
+## UI — Chrome
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `ui_frame_edge` | 边框边 | `res://assets/ui/chrome/ui_frame_edge.png` |
+| `ui_frame_corner` | 边框角 | `res://assets/ui/chrome/ui_frame_corner.png` |
+| `ui_btn_normal` | 按钮常态 | `res://assets/ui/chrome/ui_btn_normal.png` |
+| `ui_btn_disabled` | 按钮禁用 | `res://assets/ui/chrome/ui_btn_disabled.png` |
+| `ui_btn_close` | 关闭按钮 | `res://assets/ui/chrome/ui_btn_close.png` |
+| `ui_slot_empty` | 空槽 | `res://assets/ui/chrome/ui_slot_empty.png` |
+| `ui_slot_selected` | 选中槽 | `res://assets/ui/chrome/ui_slot_selected.png` |
+| `ui_lock` | 锁定 | `res://assets/ui/chrome/ui_lock.png` |
+| `ui_tab_skill` | 技能型 Tab | `res://assets/ui/chrome/ui_tab_skill.png` |
+| `ui_tab_attr` | 属性型 Tab | `res://assets/ui/chrome/ui_tab_attr.png` |
+
+## UI — 属性图标
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `icon_hp` | 生命 | `res://assets/ui/icons/stats/icon_hp.png` |
+| `icon_mind` | 念力值 | `res://assets/ui/icons/stats/icon_mind.png` |
+| `icon_mind_lv` | 念力等级 | `res://assets/ui/icons/stats/icon_mind_lv.png` |
+| `icon_vitality` | 体力 | `res://assets/ui/icons/stats/icon_vitality.png` |
+| `icon_str` | 力量 | `res://assets/ui/icons/stats/icon_str.png` |
+| `icon_patk` | 物攻 | `res://assets/ui/icons/stats/icon_patk.png` |
+| `icon_pdef` | 物防 | `res://assets/ui/icons/stats/icon_pdef.png` |
+| `icon_agi` | 敏捷（占位） | `res://assets/ui/icons/stats/icon_agi.png` |
+| `icon_int` | 智力（占位） | `res://assets/ui/icons/stats/icon_int.png` |
+| `icon_crit` | 暴击（占位） | `res://assets/ui/icons/stats/icon_crit.png` |
+| `icon_critdmg` | 爆伤（占位） | `res://assets/ui/icons/stats/icon_critdmg.png` |
+| `slot_weapon` | 武器槽标 | `res://assets/ui/icons/stats/slot_weapon.png` |
+| `slot_chest` | 胸甲槽标 | `res://assets/ui/icons/stats/slot_chest.png` |
+| `slot_pendant` | 挂坠槽标 | `res://assets/ui/icons/stats/slot_pendant.png` |
+| `equip_chest` | 胸甲 | `res://assets/ui/icons/stats/equip_chest.png` |
+| `equip_pendant` | 挂坠 | `res://assets/ui/icons/stats/equip_pendant.png` |
+
+## UI — 背包
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `icon_gold` | 金币 | `res://assets/ui/icons/bag/icon_gold.png` |
+| `ui_gold_bar` | 金币分栏条 | `res://assets/ui/icons/bag/ui_gold_bar.png` |
+| `ui_weight_bar_bg` | 承重条底 | `res://assets/ui/icons/bag/ui_weight_bar_bg.png` |
+| `ui_weight_bar_fill` | 承重条填充 | `res://assets/ui/icons/bag/ui_weight_bar_fill.png` |
+| `item_paper_note` | 纸券 | `res://assets/ui/icons/bag/item_paper_note.png` |
+| `item_bag_expand` | 空间扩容 | `res://assets/ui/icons/bag/item_bag_expand.png` |
+| `item_mind_potion` | 念力药剂 | `res://assets/ui/icons/bag/item_mind_potion.png` |
+
+## UI — 技能槽标
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `skill_slot_basic` | 普攻 | `res://assets/ui/icons/skills/skill_slot_basic.png` |
+| `skill_slot_finisher` | 杀招 | `res://assets/ui/icons/skills/skill_slot_finisher.png` |
+| `skill_slot_dodge` | 闪避 | `res://assets/ui/icons/skills/skill_slot_dodge.png` |
+| `skill_slot_defend` | 防御（灰） | `res://assets/ui/icons/skills/skill_slot_defend.png` |
+| `skill_slot_ultimate` | 绝技（灰） | `res://assets/ui/icons/skills/skill_slot_ultimate.png` |
+| `skill_slot_passive` | 被动（灰） | `res://assets/ui/icons/skills/skill_slot_passive.png` |
+
+---
+
+## Deprecated（v0.2 通用坑砖/旧怪/旧符文，文件保留兼容）
+
+> 新内容请用上方分区与 v0.4 UI/符文资源。下列路径仍存在，勿作现行主素材。
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `rune_tough` | 韧皮 | `res://assets/runes/rune_tough.png` |
+| `rune_swift` | 疾步 | `res://assets/runes/rune_swift.png` |
+| `rune_slash` | 迅斩 | `res://assets/runes/rune_slash.png` |
+| `rune_sidestep` | 侧身 | `res://assets/runes/rune_sidestep.png` |
+| `rune_edge` | 锋刃 | `res://assets/runes/rune_edge.png` |
+| `rune_reach` | 延斩 | `res://assets/runes/rune_reach.png` |
+| `rune_burn` | 灼痕 | `res://assets/runes/rune_burn.png` |
+| `rune_quake` | 崩山 | `res://assets/runes/rune_quake.png` |
 | `enemy_pit_grub` | 坑蛆 | `res://assets/enemies/enemy_pit_grub.png` |
 | `enemy_spore_spitter` | 孢喷虫 | `res://assets/enemies/enemy_spore_spitter.png` |
 | `enemy_shell_beetle` | 甲壳甲虫 | `res://assets/enemies/enemy_shell_beetle.png` |
