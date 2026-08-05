@@ -13,6 +13,7 @@ const DEFS := {
 		"learn_cost": 20,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
+		"brand_tags": ["blade"],
 	},
 	"rune_s_quake": {
 		"kind": RuneKind.SKILL,
@@ -23,6 +24,7 @@ const DEFS := {
 		"learn_cost": 20,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
+		"brand_tags": ["blade"],
 	},
 	"rune_s_cloudstep": {
 		"kind": RuneKind.SKILL,
@@ -33,6 +35,7 @@ const DEFS := {
 		"learn_cost": 20,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
+		"brand_tags": ["blade"],
 	},
 	"rune_s_ironwall": {
 		"kind": RuneKind.SKILL,
@@ -44,6 +47,7 @@ const DEFS := {
 		"weight": 1.5,
 		"tier": ItemTier.Tier.RARE,
 		"placeholder": true,
+		"brand_tags": ["blade"],
 	},
 	"rune_a_toughbone": {
 		"kind": RuneKind.ATTR,
@@ -55,6 +59,7 @@ const DEFS := {
 		"weight": 1.0,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"stat_bonuses": {"vitality": 3.0, "max_hp": 15.0},
+		"brand_tags": ["blade"],
 	},
 	"rune_a_heavyarm": {
 		"kind": RuneKind.ATTR,
@@ -66,6 +71,7 @@ const DEFS := {
 		"weight": 1.0,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"stat_bonuses": {"strength": 3.0, "patk": 4.0},
+		"brand_tags": ["blade"],
 	},
 	"rune_a_sharpeye": {
 		"kind": RuneKind.ATTR,
@@ -77,6 +83,7 @@ const DEFS := {
 		"weight": 1.0,
 		"tier": ItemTier.Tier.RARE,
 		"stat_bonuses": {"crit": 0.03},
+		"brand_tags": ["blade"],
 	},
 	"rune_a_cruel": {
 		"kind": RuneKind.ATTR,
@@ -88,6 +95,7 @@ const DEFS := {
 		"weight": 1.0,
 		"tier": ItemTier.Tier.RARE,
 		"stat_bonuses": {"critdmg": 0.10},
+		"brand_tags": ["blade"],
 	},
 }
 
@@ -160,6 +168,11 @@ static func display_with_tier(rune_id: String) -> String:
 	return Loc.t("item.tier_name", [tier_label(rune_id), display_name(rune_id)])
 
 
-## 兼容旧调用（body/weapon 装配已废弃）
-static func is_body(rune_id: String) -> bool:
-	return is_attr(rune_id)
+static func brand_tags(rune_id: String) -> Array:
+	var def: Dictionary = DEFS.get(rune_id, {})
+	return def.get("brand_tags", ["blade"])
+
+
+static func matches_brand(rune_id: String, _brand_quality: String) -> bool:
+	## MVP：大刀烙印允许全部 v0.4 符文；后续按 brand_tags 与武器族过滤。
+	return "blade" in brand_tags(rune_id)

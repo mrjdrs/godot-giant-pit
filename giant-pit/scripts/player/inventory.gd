@@ -159,6 +159,27 @@ func use_bag_expand_at(index: int) -> String:
 	return "ok"
 
 
+func use_mind_potion_at(index: int) -> String:
+	if index < 0 or index >= slots.size():
+		return "none"
+	var entry: Dictionary = slots[index]
+	if entry.get("type") != "item" or str(entry.get("id")) != "item_mind_potion":
+		return "wrong"
+	if not remove_at(index, 1):
+		return "none"
+	MetaProgress.restore_mind_value(MetaProgress.MIND_POTION_RESTORE)
+	changed.emit()
+	return "ok"
+
+
+func paper_note_count() -> int:
+	var total := 0
+	for entry in slots:
+		if entry.get("type") == "item" and str(entry.get("id")) == "item_paper_note":
+			total += int(entry.get("count", 1))
+	return total
+
+
 func snapshot_materials() -> Array:
 	var out: Array = []
 	for entry in slots:

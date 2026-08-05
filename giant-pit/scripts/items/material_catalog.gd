@@ -111,3 +111,17 @@ static func tier_color(mat_id: String) -> Color:
 
 static func display_with_tier(mat_id: String) -> String:
 	return Loc.t("item.tier_name", [tier_label(mat_id), display_name(mat_id)])
+
+
+static func sell_price(mat_id: String) -> int:
+	match tier(mat_id):
+		ItemTier.Tier.UNCOMMON:
+			return 12
+		ItemTier.Tier.RARE:
+			return 25
+		ItemTier.Tier.EPIC:
+			return 40
+		ItemTier.Tier.LEGENDARY:
+			return 50
+		_:
+			return 5

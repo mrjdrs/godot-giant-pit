@@ -1,5 +1,5 @@
 extends RefCounted
-## 特殊道具（纸券 / 扩容 / 药剂等）。
+## 特殊道具（金币券 / 扩容 / 药剂等）。
 
 const ITEMS := {
 	"item_paper_note": {
@@ -7,6 +7,7 @@ const ITEMS := {
 		"icon": "res://assets/ui/icons/bag/item_paper_note.png",
 		"stack": 99,
 		"weight": 0.2,
+		"face_value": 100,
 		"desc_key": "item.paper_note.desc",
 	},
 	"item_bag_expand": {
@@ -23,6 +24,7 @@ const ITEMS := {
 		"stack": 10,
 		"weight": 0.5,
 		"usable": true,
+		"mind_restore": 30,
 		"desc_key": "item.mind_potion.desc",
 	},
 }

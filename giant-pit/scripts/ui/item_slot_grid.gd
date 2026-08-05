@@ -40,6 +40,14 @@ func set_slot_count(n: int) -> void:
 	set_inventory_entries(_entries)
 
 
+func set_selectable(enabled: bool) -> void:
+	if selectable == enabled:
+		return
+	selectable = enabled
+	_rebuild_slots()
+	set_inventory_entries(_entries)
+
+
 func _rebuild_slots() -> void:
 	for c in get_children():
 		c.queue_free()

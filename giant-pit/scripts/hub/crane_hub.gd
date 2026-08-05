@@ -27,6 +27,20 @@ var sheet_host: CanvasLayer = null
 var _mode: String = ""
 var _selected_quest: String = ""
 
+const PANEL_BTN_LEFT := 20.0
+const PANEL_BTN_RIGHT := 540.0
+const PANEL_BTN_ROW_Y := 288.0
+const PANEL_BTN_H := 34.0
+const PANEL_BTN_GAP := 8.0
+const PANEL_BTN_CLOSE_Y := 332.0
+const PANEL_BODY_BOTTOM := 268.0
+const STASH_GRID_TOP := 56.0
+const STASH_GRID_LEFT := 24.0
+const STASH_GRID_RIGHT := 536.0
+const STASH_SLOT := 48.0
+const STASH_GAP := 6.0
+const STASH_COLS := 6
+
 
 func _ready() -> void:
 	_build_hub()
@@ -42,9 +56,69 @@ func _ready() -> void:
 	hud.get_node("HintLabel").text = Loc.t("hint.hub")
 	if stash_grid.has_signal("slot_hovered") and not stash_grid.slot_hovered.is_connected(_on_stash_hover):
 		stash_grid.slot_hovered.connect(_on_stash_hover)
+	if stash_grid.has_signal("slot_pressed") and not stash_grid.slot_pressed.is_connected(_on_stash_slot_pressed):
+		stash_grid.slot_pressed.connect(_on_stash_slot_pressed)
+	_style_hub_buttons()
 	_refresh_status()
 	MetaProgress.changed.connect(_refresh_status)
 	AudioManager.play_bgm()
+
+
+func _style_hub_buttons() -> void:
+	var disabled_col := Color(0.68, 0.64, 0.58, 1)
+	for b in [btn_a, btn_b, btn_c, btn_close]:
+		b.clip_text = true
+		b.add_theme_font_size_override("font_size", 12)
+		b.add_theme_color_override("font_disabled_color", disabled_col)
+
+
+func _layout_panel_buttons(show_a: bool, show_b: bool, show_c: bool) -> void:
+	btn_a.visible = show_a
+	btn_b.visible = show_b
+	btn_c.visible = show_c
+	var row: Array[Button] = []
+	if show_a:
+		row.append(btn_a)
+	if show_b:
+		row.append(btn_b)
+	if show_c:
+		row.append(btn_c)
+	var width := PANEL_BTN_RIGHT - PANEL_BTN_LEFT
+	var count := row.size()
+	if count > 0:
+		var gap_total := PANEL_BTN_GAP * float(count - 1)
+		var btn_w := (width - gap_total) / float(count)
+		var x := PANEL_BTN_LEFT
+		for b in row:
+			b.position = Vector2(x, PANEL_BTN_ROW_Y)
+			b.size = Vector2(btn_w, PANEL_BTN_H)
+			x += btn_w + PANEL_BTN_GAP
+	btn_close.position = Vector2(200.0, PANEL_BTN_CLOSE_Y)
+	btn_close.size = Vector2(160.0, PANEL_BTN_H)
+
+
+func _layout_stash_panel(slot_count: int) -> void:
+	var rows := int(ceil(float(maxi(slot_count, 1)) / float(STASH_COLS)))
+	var grid_h := rows * STASH_SLOT + maxi(rows - 1, 0) * STASH_GAP
+	stash_grid.position = Vector2(STASH_GRID_LEFT, STASH_GRID_TOP)
+	stash_grid.size = Vector2(STASH_GRID_RIGHT - STASH_GRID_LEFT, grid_h)
+	var hint_y := STASH_GRID_TOP + grid_h + 10.0
+	var hint_h := 22.0
+	if panel.has_node("Tooltip"):
+		var tip: Label = panel.get_node("Tooltip")
+		tip.position = Vector2(PANEL_BTN_LEFT, hint_y)
+		tip.size = Vector2(PANEL_BTN_RIGHT - PANEL_BTN_LEFT, hint_h)
+		tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		tip.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		tip.text = Loc.t("hub.stash_sell_hint")
+	var btn_y := hint_y + hint_h + 8.0
+	btn_a.position = Vector2(PANEL_BTN_LEFT, btn_y)
+	btn_a.size = Vector2(200.0, PANEL_BTN_H)
+	btn_a.visible = true
+	btn_b.visible = false
+	btn_c.visible = false
+	btn_close.position = Vector2(200.0, btn_y + PANEL_BTN_H + 10.0)
+	btn_close.size = Vector2(160.0, PANEL_BTN_H)
 
 
 func _ensure_sheet_host() -> void:
@@ -103,6 +177,8 @@ func _build_hub() -> void:
 	_add_facility("board", Vector2(-120, -40), "res://assets/tiles/hub/hub_board.png")
 	_add_facility("alchemy", Vector2(0, -40), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("quiet", Vector2(120, -40), "res://assets/tiles/hub/hub_quiet_door.png")
+	_add_facility("inn", Vector2(160, 0), "res://assets/tiles/hub/hub_quiet_door.png")
+	_add_facility("exchange", Vector2(-120, 60), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("stash", Vector2(-60, 60), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("pit", Vector2(80, 80), "res://assets/tiles/hub/hub_pit_mouth.png")
 
@@ -149,14 +225,18 @@ func _spawn_player() -> void:
 	entities.add_child(player)
 	player.global_position = Vector2(0, 40)
 	player.combat_enabled = false
-	player.apply_meta_loadout("iron")
+	player.apply_meta_brand("iron")
 	player.toast.connect(func(t): _toast(t))
 	if sheet_host:
 		sheet_host.bind_player(player, true)
 
 
 func _refresh_status() -> void:
-	hud.get_node("StatusLabel").text = "%s | %s | %s | %s" % [
+	var day_txt := Loc.t("hud.game_day", [MetaProgress.game_day])
+	var pit_txt := Loc.t("hud.pit_done_today") if MetaProgress.entered_pit_today else Loc.t("hud.pit_ready_today")
+	hud.get_node("StatusLabel").text = "%s | %s | %s | %s | %s | %s" % [
+		day_txt,
+		pit_txt,
 		Loc.t("hud.mind", [MetaProgress.mind_level]),
 		Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]),
 		Loc.t("hud.gold", [MetaProgress.gold]),
@@ -184,6 +264,10 @@ func _on_facility(facility_id: String, _by: Node) -> void:
 			_open_board()
 		"quiet":
 			_open_quiet()
+		"inn":
+			_open_inn()
+		"exchange":
+			_open_exchange()
 		"alchemy":
 			_open_alchemy()
 		"stash":
@@ -223,6 +307,7 @@ func _open_board() -> void:
 		btn_a.visible = true
 		btn_b.visible = false
 		btn_c.visible = false
+		_layout_panel_buttons(true, false, false)
 	else:
 		var ids: Array = QuestDefs.all_ids()
 		_selected_quest = str(ids[0])
@@ -241,7 +326,8 @@ func _open_board() -> void:
 		btn_a.visible = true
 		btn_b.visible = true
 		btn_c.visible = true
-	panel_body.text = "\n".join(lines)
+		_layout_panel_buttons(true, true, true)
+	_set_panel_body("\n".join(lines))
 
 
 func _weight_line(level: int, key: String) -> String:
@@ -254,28 +340,102 @@ func _weight_line(level: int, key: String) -> String:
 	])
 
 
+func _set_panel_body(text: String) -> void:
+	panel_body.bbcode_enabled = false
+	panel_body.text = text
+	if panel_body.get_line_count() > 0:
+		panel_body.scroll_to_line(0)
+
+
+func _stash_entry_at(index: int) -> Dictionary:
+	if not stash_grid.has_method("get_slot_tooltip"):
+		return {}
+	var keys: Array = MetaProgress.stash.keys()
+	keys.sort()
+	if index < 0 or index >= keys.size():
+		return {}
+	var sid := str(keys[index])
+	var entry_type := "mat"
+	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+	const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
+	if RuneCatalog.DEFS.has(sid):
+		entry_type = "rune"
+	elif ItemCatalog.ITEMS.has(sid):
+		entry_type = "item"
+	return {"type": entry_type, "id": sid, "count": MetaProgress.stash_count(sid)}
+
+
 func _open_quiet() -> void:
 	_mode = "quiet"
 	_show_text_panel()
 	panel_title.text = Loc.t("hub.quiet_title")
 	var lvl := MetaProgress.mind_level
 	var cost := MindTable.cost_to_next(lvl)
+	var shard_have := MetaProgress.stash_count("mind_shard")
+	var core_have := MetaProgress.stash_count("mind_core")
+	var equiv := shard_have + core_have * 3
 	var lines: PackedStringArray = []
-	lines.append(Loc.t("hub.quiet_hint", [lvl, cost]))
-	lines.append(Loc.t("hub.mind_value_line", [
-		MetaProgress.mind_value, MetaProgress.SHARD_TO_VALUE, MetaProgress.CORE_TO_VALUE
-	]))
-	lines.append(_weight_line(lvl, "hub.quiet_weights"))
+	lines.append(Loc.t("hub.quiet_level", [lvl]))
+	lines.append(Loc.t("hub.quiet_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]))
 	if lvl < 5:
-		lines.append(_weight_line(lvl + 1, "hub.quiet_effect"))
+		lines.append("")
+		lines.append(Loc.t("hub.quiet_cost", [cost, shard_have, core_have, equiv]))
+		lines.append(Loc.t("hub.quiet_effect_desc", [MetaProgress.MIND_VALUE_PER_LEVEL]))
+		lines.append(_weight_line(lvl, "hub.quiet_weights_now"))
+		lines.append(_weight_line(lvl + 1, "hub.quiet_weights_next"))
 	else:
+		lines.append("")
 		lines.append(Loc.t("hub.quiet_max"))
-	panel_body.text = "\n".join(lines)
-	btn_a.text = Loc.t("hub.quiet_do")
+		lines.append(_weight_line(lvl, "hub.quiet_weights_now"))
+	_set_panel_body("\n".join(lines))
+	btn_a.text = Loc.t("hub.quiet_do", [lvl + 1]) if lvl < 5 else Loc.t("hub.quiet_max")
 	btn_a.visible = lvl < 5
-	btn_b.text = Loc.t("hub.quiet_convert")
-	btn_b.visible = true
+	btn_a.disabled = lvl >= 5 or equiv < cost
+	btn_b.visible = false
 	btn_c.visible = false
+	_layout_panel_buttons(lvl < 5, false, false)
+
+
+func _open_inn() -> void:
+	_mode = "inn"
+	_show_text_panel()
+	panel_title.text = Loc.t("hub.inn_title")
+	_set_panel_body(Loc.t("hub.inn_body", [
+		MetaProgress.game_day,
+		MetaProgress.mind_value,
+		MetaProgress.mind_value_max(),
+	]))
+	btn_a.text = Loc.t("hub.inn_rest")
+	btn_a.visible = true
+	btn_a.disabled = false
+	btn_b.visible = false
+	btn_c.visible = false
+	_layout_panel_buttons(true, false, false)
+
+
+func _open_exchange() -> void:
+	_mode = "exchange"
+	_show_text_panel()
+	panel_title.text = Loc.t("hub.exchange_title")
+	var voucher_gold := MetaProgress.VOUCHER_SPEND_VALUE
+	var lines: PackedStringArray = []
+	lines.append(Loc.t("hub.exchange_hint", [
+		MetaProgress.GOLD_TO_PAPER_COST,
+		voucher_gold,
+	]))
+	lines.append(Loc.t("hud.gold", [MetaProgress.gold]))
+	lines.append(Loc.t("hud.paper_notes", [MetaProgress.paper_note_count()]))
+	lines.append(Loc.t("hub.spendable_gold", [MetaProgress.spendable_gold()]))
+	lines.append(Loc.t("hub.exchange_potion_line", [MetaProgress.MIND_POTION_PRICE, MetaProgress.MIND_POTION_RESTORE]))
+	_set_panel_body("\n".join(lines))
+	var gold_cost := MetaProgress.GOLD_TO_PAPER_COST
+	btn_a.text = Loc.t("hub.exchange_gold_to_paper", [gold_cost])
+	btn_b.text = Loc.t("hub.exchange_paper_to_gold", [voucher_gold])
+	btn_c.text = Loc.t("hub.buy_mind_potion", [MetaProgress.MIND_POTION_PRICE])
+	btn_a.disabled = MetaProgress.gold < gold_cost
+	btn_b.disabled = MetaProgress.paper_note_count() < 1
+	btn_c.disabled = not MetaProgress.can_afford_gold(MetaProgress.MIND_POTION_PRICE)
+	_layout_panel_buttons(true, true, true)
 
 
 func _open_pit() -> void:
@@ -284,7 +444,9 @@ func _open_pit() -> void:
 	panel_title.text = Loc.t("facility.pit")
 	var lines: PackedStringArray = []
 	lines.append(Loc.t("hub.enter_pit"))
-	lines.append(Loc.t("hud.mind_value", [MetaProgress.mind_value]))
+	lines.append(Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]))
+	if not MetaProgress.can_enter_pit_today():
+		lines.append(Loc.t("hub.pit_blocked"))
 	if MetaProgress.unlocked_warps.is_empty():
 		lines.append(Loc.t("hub.warp_locked_none"))
 	else:
@@ -294,11 +456,13 @@ func _open_pit() -> void:
 	panel_body.text = "\n".join(lines)
 	btn_a.text = Loc.t("hub.enter")
 	btn_a.visible = true
+	btn_a.disabled = not MetaProgress.can_enter_pit_today()
 	var can_warp := not MetaProgress.unlocked_warps.is_empty() and MetaProgress.can_afford_mind(MetaProgress.WARP_COST_ENTER)
 	btn_b.text = Loc.t("hub.enter_warp", [MetaProgress.WARP_COST_ENTER])
 	btn_b.visible = not MetaProgress.unlocked_warps.is_empty()
 	btn_b.disabled = not can_warp
 	btn_c.visible = false
+	_layout_panel_buttons(true, not MetaProgress.unlocked_warps.is_empty(), false)
 
 
 func _format_cost(costs: Dictionary) -> String:
@@ -325,6 +489,10 @@ func _open_alchemy() -> void:
 	btn_a.visible = true
 	btn_b.visible = true
 	btn_c.visible = true
+	btn_a.disabled = false
+	btn_b.disabled = false
+	btn_c.disabled = false
+	_layout_panel_buttons(true, true, true)
 
 
 func _equip_text() -> String:
@@ -353,18 +521,35 @@ func _open_stash() -> void:
 	panel_body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel_body.offset_bottom = 80.0
 	stash_grid.visible = true
+	if stash_grid.has_method("set_selectable"):
+		stash_grid.set_selectable(true)
+	elif stash_grid.get("selectable") != null:
+		stash_grid.selectable = true
+		if stash_grid.has_method("set_slot_count"):
+			stash_grid.set_slot_count(stash_grid.slot_count)
+	var stash_need := maxi(24, MetaProgress.stash.size())
+	stash_need = int(ceil(float(stash_need) / 6.0) * 6.0)
+	if stash_grid.has_method("set_slot_count"):
+		stash_grid.set_slot_count(stash_need)
 	if stash_grid.has_method("set_stash_dict"):
 		stash_grid.set_stash_dict(MetaProgress.stash)
-	if panel.has_node("Tooltip"):
-		panel.get_node("Tooltip").text = ""
-	btn_a.visible = false
-	btn_b.visible = false
-	btn_c.visible = false
+	_layout_stash_panel(stash_need)
+	btn_a.text = Loc.t("hub.sell_one")
+	btn_a.disabled = false
 
 
 func _on_stash_hover(_index: int, tip: String) -> void:
-	if panel.has_node("Tooltip"):
+	if panel.has_node("Tooltip") and tip != "":
 		panel.get_node("Tooltip").text = tip
+
+
+func _on_stash_slot_pressed(index: int) -> void:
+	if _mode != "stash":
+		return
+	if stash_grid.has_method("get_slot_tooltip"):
+		var tip := str(stash_grid.get_slot_tooltip(index))
+		if panel.has_node("Tooltip"):
+			panel.get_node("Tooltip").text = tip if tip != "" else Loc.t("hub.stash_sell_hint")
 
 
 func _show_text_panel() -> void:
@@ -372,10 +557,12 @@ func _show_text_panel() -> void:
 	stash_grid.visible = false
 	panel_body.visible = true
 	panel_body.mouse_filter = Control.MOUSE_FILTER_STOP
-	panel_body.offset_bottom = 280.0
+	panel_body.offset_bottom = PANEL_BODY_BOTTOM
 	if panel.has_node("Tooltip"):
 		panel.get_node("Tooltip").text = ""
+	btn_a.disabled = false
 	btn_b.disabled = false
+	btn_c.disabled = false
 
 
 func _on_btn_a() -> void:
@@ -397,6 +584,19 @@ func _on_btn_a() -> void:
 				_:
 					_toast(Loc.t("hub.quiet_no"))
 			_open_quiet()
+		"inn":
+			MetaProgress.advance_day()
+			_toast(Loc.t("hub.inn_ok", [MetaProgress.game_day]))
+			_open_inn()
+		"exchange":
+			var ex := MetaProgress.exchange_gold_to_paper(1)
+			if ex == "ok":
+				_toast(Loc.t("hub.exchange_gold_ok"))
+			else:
+				_toast(Loc.t("hub.no_gold"))
+			_open_exchange()
+		"stash":
+			_sell_selected_stash()
 		"alchemy":
 			_craft(Equipment.SLOT_CHEST)
 		"pit":
@@ -409,14 +609,13 @@ func _on_btn_b() -> void:
 			_accept_quest_index(1)
 		"alchemy":
 			_craft(Equipment.SLOT_AMULET)
-		"quiet":
-			var before := MetaProgress.mind_value
-			var cr := MetaProgress.try_convert_to_mind_value(false)
-			if cr == "ok":
-				_toast(Loc.t("hub.quiet_convert_ok", [MetaProgress.mind_value - before, MetaProgress.mind_value]))
+		"exchange":
+			var ex := MetaProgress.exchange_paper_to_gold(1)
+			if ex == "ok":
+				_toast(Loc.t("hub.exchange_paper_ok"))
 			else:
-				_toast(Loc.t("hub.quiet_no"))
-			_open_quiet()
+				_toast(Loc.t("hub.no_paper"))
+			_open_exchange()
 		"pit":
 			_enter_pit_via_warp()
 
@@ -427,6 +626,13 @@ func _on_btn_c() -> void:
 			_accept_quest_index(2)
 		"alchemy":
 			_upgrade_any()
+		"exchange":
+			var ex := MetaProgress.buy_mind_potion(1)
+			if ex == "ok":
+				_toast(Loc.t("hub.buy_potion_ok"))
+			else:
+				_toast(Loc.t("hub.no_gold"))
+			_open_exchange()
 
 
 func _accept_quest_index(i: int) -> void:
@@ -470,11 +676,18 @@ func _upgrade_any() -> void:
 
 
 func _enter_pit(spawn_id: String = "") -> void:
+	if not MetaProgress.can_enter_pit_today():
+		_toast(Loc.t("hub.pit_blocked"))
+		return
+	MetaProgress.mark_entered_pit()
 	RunSession.begin_run(spawn_id)
 	get_tree().change_scene_to_file("res://scenes/pit/pit_floor_01.tscn")
 
 
 func _enter_pit_via_warp() -> void:
+	if not MetaProgress.can_enter_pit_today():
+		_toast(Loc.t("hub.pit_blocked"))
+		return
 	if MetaProgress.unlocked_warps.is_empty():
 		_toast(Loc.t("hub.warp_locked_none"))
 		return
@@ -489,9 +702,40 @@ func _enter_pit_via_warp() -> void:
 	_enter_pit(wid)
 
 
+func _sell_selected_stash() -> void:
+	if not stash_grid.has_method("get_selected"):
+		_toast(Loc.t("hub.sell_none"))
+		return
+	var idx := int(stash_grid.get_selected())
+	if idx < 0:
+		_toast(Loc.t("hub.sell_none"))
+		return
+	var entry := _stash_entry_at(idx)
+	if entry.is_empty():
+		_toast(Loc.t("hub.sell_none"))
+		return
+	var item_id := str(entry.get("id"))
+	var item_type := str(entry.get("type"))
+	if item_type != "mat":
+		_toast(Loc.t("hub.sell_not_material"))
+		return
+	var r := MetaProgress.sell_stash_material(item_id, 1)
+	if r == "ok":
+		_toast(Loc.t("hub.sell_ok", [MaterialCatalog.display_name(item_id), MaterialCatalog.sell_price(item_id)]))
+	elif r == "no_item":
+		_toast(Loc.t("hub.sell_none"))
+	else:
+		_toast(Loc.t("hub.sell_fail"))
+	_open_stash()
+
+
 func _close_panel() -> void:
 	panel.visible = false
 	stash_grid.visible = false
+	if stash_grid.has_method("set_selectable"):
+		stash_grid.set_selectable(false)
+	elif stash_grid.get("selectable") != null:
+		stash_grid.selectable = false
 	if panel.has_node("Tooltip"):
 		panel.get_node("Tooltip").text = ""
 	_mode = ""

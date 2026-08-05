@@ -73,12 +73,35 @@ theme_override_font_sizes/font_size = 14
 vertical_alignment = 1
 text = "金币 0"
 
+[node name="PaperLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 140.0
+offset_top = 48.0
+offset_right = 260.0
+offset_bottom = 68.0
+theme_override_font_sizes/font_size = 14
+vertical_alignment = 1
+text = "金币券 0"
+
+[node name="HubHintLabel" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 280.0
+offset_top = 48.0
+offset_right = 536.0
+offset_bottom = 68.0
+theme_override_colors/font_color = Color(0.65, 0.62, 0.55, 1)
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 2
+vertical_alignment = 1
+text = "材料请至材料仓库"
+
 [node name="WeightTrack" type="Panel" parent="."]
 layout_mode = 0
-offset_left = 220.0
-offset_top = 54.0
+offset_left = 24.0
+offset_top = 72.0
 offset_right = 536.0
-offset_bottom = 66.0
+offset_bottom = 84.0
 
 [node name="WeightFill" type="ColorRect" parent="WeightTrack"]
 layout_mode = 0
@@ -91,9 +114,9 @@ color = Color(0.91, 0.66, 0.22, 1)
 [node name="WeightLabel" type="Label" parent="."]
 layout_mode = 0
 offset_left = 24.0
-offset_top = 72.0
+offset_top = 86.0
 offset_right = 536.0
-offset_bottom = 90.0
+offset_bottom = 102.0
 theme_override_colors/font_color = Color(0.75, 0.7, 0.62, 1)
 theme_override_font_sizes/font_size = 12
 text = "承重 0/20"
@@ -101,7 +124,7 @@ text = "承重 0/20"
 [node name="GridScroll" type="ScrollContainer" parent="."]
 layout_mode = 0
 offset_left = 24.0
-offset_top = 98.0
+offset_top = 108.0
 offset_right = 536.0
 offset_bottom = 310.0
 horizontal_scroll_mode = 0

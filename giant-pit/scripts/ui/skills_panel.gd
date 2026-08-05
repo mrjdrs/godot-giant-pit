@@ -227,7 +227,11 @@ func _refresh_skill_slots() -> void:
 		var icon: TextureRect = panel.get_node("Icon")
 		if icon_path != "":
 			icon.texture = load(icon_path)
-		var locked := not mvp_active and learned_id == ""
+		var locked := learned_id == ""
+		if _player != null:
+			locked = not _player.skills.is_slot_unlocked(slot_id) and learned_id == ""
+		elif not mvp_active:
+			locked = true
 		panel.get_node("Lock").visible = locked
 		panel.modulate = Color(0.55, 0.55, 0.55, 1) if locked else Color.WHITE
 		panel.add_theme_stylebox_override("panel", _panel_style(INNER_BG, ACCENT_GOLD if learned_id != "" else ACCENT_TEAL, 1))

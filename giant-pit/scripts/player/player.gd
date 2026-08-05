@@ -11,10 +11,9 @@ signal toast(text: String, category: int, color: Color)
 signal loadout_changed
 signal inventory_changed
 signal stats_changed
-signal rune_replace_requested(rune_id: String, candidates: Array)
 signal interact_prompt_changed(text: String)
 
-enum State { IDLE, MOVE, ATTACK_LIGHT, ATTACK_HEAVY, ROLL }
+enum State { IDLE, MOVE, ATTACK_LIGHT, ATTACK_HEAVY, ROLL, DEFEND }
 enum AttackPhase { NONE, LIGHT_WINDUP, LIGHT_ACTIVE, LIGHT_RECOVERY, HEAVY_WINDUP, HEAVY_ACTIVE, HEAVY_RECOVERY }
 
 const BASE_MOVE_SPEED := 140.0
@@ -36,6 +35,8 @@ const HEAVY_RECOVERY := 0.36
 const HEAVY_DAMAGE := 22.0
 const HEAVY_KNOCKBACK := 260.0
 const BLADE_ART_OFFSET_DEG := 90.0
+const DEFEND_DAMAGE_MULT := 0.5
+const DEFEND_MOVE_MULT := 0.45
 
 @onready var sprite: Sprite2D = $Sprite
 @onready var blade_pivot: Node2D = $BladePivot
@@ -71,7 +72,9 @@ var combat_enabled: bool = true
 var brand_quality: String = "iron"
 var equip_bonus: Dictionary = {"max_hp": 0.0, "defense": 0.0, "damage": 0.0}
 var _hurt_flash: float = 0.0
+var _defending: bool = false
 var _last_prompt: String = ""
+var _pending_lifesteal: float = 0.0
 
 
 func _ready() -> void:
@@ -111,6 +114,8 @@ func _physics_process(delta: float) -> void:
 			_process_free_move(delta)
 		State.ROLL:
 			_process_roll(delta)
+		State.DEFEND:
+			_process_defend(delta)
 		State.ATTACK_LIGHT, State.ATTACK_HEAVY:
 			_process_attack_move(delta)
 
@@ -135,6 +140,14 @@ func _handle_combat_input() -> void:
 		return
 	if state == State.ATTACK_LIGHT or state == State.ATTACK_HEAVY:
 		return
+	if skills.has("rune_s_ironwall") and Input.is_action_pressed("defend"):
+		if state != State.DEFEND:
+			state = State.DEFEND
+			_defending = true
+			hitbox.disable()
+		return
+	if state == State.DEFEND:
+		_end_defend()
 	if Input.is_action_just_pressed("roll") and roll_cd_left <= 0.0:
 		_start_roll()
 		return
@@ -154,6 +167,22 @@ func _process_free_move(_delta: float) -> void:
 	velocity = input_dir * _move_speed()
 	_update_facing_to_mouse()
 	state = State.MOVE if input_dir.length_squared() > 0.01 else State.IDLE
+
+
+func _process_defend(_delta: float) -> void:
+	if input_locked or not Input.is_action_pressed("defend") or not skills.has("rune_s_ironwall"):
+		_end_defend()
+		return
+	_defending = true
+	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	velocity = input_dir * _move_speed() * DEFEND_MOVE_MULT
+	_update_facing_to_mouse()
+
+
+func _end_defend() -> void:
+	_defending = false
+	if state == State.DEFEND:
+		state = State.IDLE
 
 
 func _process_attack_move(_delta: float) -> void:
@@ -208,7 +237,7 @@ func _brand_stats() -> Dictionary:
 	return MindTable.BRAND_STATS.get(brand_quality, MindTable.BRAND_STATS["iron"])
 
 
-func apply_meta_loadout(p_brand: String = "iron") -> void:
+func apply_meta_brand(p_brand: String = "iron") -> void:
 	brand_quality = p_brand
 	equip_bonus = MetaProgress.total_equipment_bonuses()
 	_refresh_character_stats(false)
@@ -298,7 +327,7 @@ func _tick_attack(delta: float) -> void:
 		return
 	match _attack_phase:
 		AttackPhase.LIGHT_WINDUP:
-			hitbox.enable(LIGHT_DAMAGE * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK), LIGHT_KNOCKBACK, self)
+			hitbox.enable(_roll_attack_damage(LIGHT_DAMAGE * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), LIGHT_KNOCKBACK, self)
 			blade_swing_deg = 45.0
 			_apply_blade_visual()
 			_attack_phase = AttackPhase.LIGHT_ACTIVE
@@ -318,7 +347,7 @@ func _tick_attack(delta: float) -> void:
 				combo_window = 0.28
 				state = State.IDLE
 		AttackPhase.HEAVY_WINDUP:
-			hitbox.enable(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK), _attack_kb, self)
+			hitbox.enable(_roll_attack_damage(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), _attack_kb, self)
 			blade_swing_deg = 60.0
 			blade_sprite.scale = Vector2.ONE
 			_apply_blade_visual()
@@ -347,8 +376,19 @@ func _set_hitbox_size(size: Vector2, offset: Vector2) -> void:
 	hitbox_shape.position = offset
 
 
+func _roll_attack_damage(base: float) -> float:
+	var dmg := base
+	if stats.crit_enabled and randf() < stats.crit:
+		dmg *= 1.0 + stats.critdmg
+	var ls := float(_brand_stats().get("lifesteal", 0.0))
+	if ls > 0.0:
+		_pending_lifesteal += dmg * ls
+	return dmg
+
+
 func _on_hitbox_hit(_hurtbox: Area2D) -> void:
 	call_deferred("_deferred_hit_fx")
+	call_deferred("_apply_pending_lifesteal")
 
 
 func _deferred_hit_fx() -> void:
@@ -356,10 +396,22 @@ func _deferred_hit_fx() -> void:
 	AudioManager.sfx_blade()
 
 
+func _apply_pending_lifesteal() -> void:
+	if _pending_lifesteal <= 0.0:
+		return
+	var heal := _pending_lifesteal
+	_pending_lifesteal = 0.0
+	hp = minf(hp + heal, max_hp)
+	hp_changed.emit(hp, max_hp)
+
+
 func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	if invincible or input_locked:
 		return
-	var mitigated: float = maxf(amount - stats.pdef, 1.0)
+	var incoming := amount
+	if _defending and skills.has("rune_s_ironwall"):
+		incoming *= DEFEND_DAMAGE_MULT
+	var mitigated: float = maxf(incoming - stats.pdef, 1.0)
 	hp = maxf(hp - mitigated, 0.0)
 	_hurt_flash = 0.2
 	hp_changed.emit(hp, max_hp)
@@ -397,7 +449,7 @@ func try_add_rune(rune_id: String) -> String:
 
 
 func try_learn_rune(rune_id: String, from_stash: bool = false) -> String:
-	var r := skills.try_learn(rune_id, inventory if not from_stash else null, from_stash)
+	var r := skills.try_learn(rune_id, inventory if not from_stash else null, from_stash, brand_quality)
 	if r == "ok":
 		_refresh_character_stats(true)
 		loadout_changed.emit()
@@ -427,19 +479,6 @@ func _refresh_character_stats(keep_ratio: bool) -> void:
 	hp = clampf(max_hp * ratio, 1.0, max_hp) if keep_ratio else max_hp
 	hp_changed.emit(hp, max_hp)
 	stats_changed.emit()
-
-
-## 兼容旧接口（已废弃装配）
-func request_rune_replace(_pickup: Node, _rune_id: String) -> void:
-	show_toast(Loc.t("skill.learn_hint"))
-
-
-func confirm_rune_replace(_old_id: String) -> void:
-	pass
-
-
-func cancel_rune_replace() -> void:
-	pass
 
 
 func set_nearby_interactable(node: Node) -> void:

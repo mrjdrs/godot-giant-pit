@@ -9,9 +9,10 @@ const ACCENT_GOLD := Color(0.91, 0.66, 0.22, 1)
 const ACCENT_TEAL := Color(0.24, 0.55, 0.48, 1)
 const PANEL_BG := Color(0.12, 0.11, 0.10, 0.97)
 const INNER_BG := Color(0.09, 0.08, 0.07, 0.95)
+const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
 
 var _player: Node = null
-var _hub_mode: bool = false ## 枢纽：显示 stash
+var _hub_mode: bool = false ## 枢纽：仍只显示探索背包（与材料仓库独立）
 var _selected: int = -1
 
 
@@ -114,8 +115,19 @@ func toggle() -> void:
 func refresh() -> void:
 	if has_node("Title"):
 		$Title.text = Loc.t("hud.bag_title")
+	if has_node("HubHintLabel"):
+		$HubHintLabel.visible = _hub_mode
+		if _hub_mode:
+			$HubHintLabel.text = Loc.t("bag.hub_empty_hint")
 	if has_node("GoldLabel"):
 		$GoldLabel.text = Loc.t("hud.gold", [MetaProgress.gold])
+	if has_node("PaperLabel"):
+		var paper_n := 0
+		if _hub_mode or _player == null:
+			paper_n = MetaProgress.paper_note_count()
+		elif _player.get("inventory") != null:
+			paper_n = _player.inventory.paper_note_count()
+		$PaperLabel.text = Loc.t("hud.paper_notes", [paper_n])
 	_refresh_grid()
 	_refresh_weight()
 	if _selected >= 0:
@@ -128,21 +140,15 @@ func _refresh_grid() -> void:
 	var grid: Node = _grid()
 	if grid == null:
 		return
-	if _hub_mode or _player == null:
-		var entries: Array = MetaProgress.stash_as_entries()
-		var need: int = maxi(12, entries.size())
-		## 凑满整行，和材料仓库一样整齐
-		need = int(ceil(float(need) / 6.0) * 6.0)
-		if grid.has_method("set_slot_count"):
-			grid.call("set_slot_count", need)
-		grid.call("set_inventory_entries", entries)
-	else:
-		var inv = _player.inventory
-		var need2: int = inv.max_slots()
-		need2 = int(ceil(float(need2) / 6.0) * 6.0)
-		if grid.has_method("set_slot_count"):
-			grid.call("set_slot_count", maxi(12, need2))
-		grid.call("set_inventory_entries", inv.slots)
+	var slots: Array = []
+	var max_n := 12
+	if _player != null and _player.get("inventory") != null:
+		slots = _player.inventory.slots
+		max_n = _player.inventory.max_slots()
+	max_n = int(ceil(float(maxi(12, max_n)) / 6.0) * 6.0)
+	if grid.has_method("set_slot_count"):
+		grid.call("set_slot_count", max_n)
+	grid.call("set_inventory_entries", slots)
 
 
 func _refresh_weight() -> void:
@@ -150,11 +156,11 @@ func _refresh_weight() -> void:
 		return
 	var fill: ColorRect = $WeightTrack/WeightFill if has_node("WeightTrack/WeightFill") else null
 	if _hub_mode or _player == null:
-		$WeightLabel.text = Loc.t("bag.weight_hub")
 		if has_node("WeightTrack"):
 			$WeightTrack.visible = false
 		if fill:
 			fill.visible = false
+		$WeightLabel.text = Loc.t("bag.weight_hub")
 		return
 	if has_node("WeightTrack"):
 		$WeightTrack.visible = true
@@ -217,7 +223,10 @@ func _can_use(index: int) -> bool:
 	if index < 0 or index >= inv.slots.size():
 		return false
 	var e: Dictionary = inv.slots[index]
-	return e.get("type") == "item" and str(e.get("id")) == "item_bag_expand"
+	var item_id := str(e.get("id"))
+	if e.get("type") == "item" and ItemCatalog.is_usable(item_id):
+		return true
+	return false
 
 
 func _on_use_pressed() -> void:
@@ -225,10 +234,21 @@ func _on_use_pressed() -> void:
 	if _hub_mode or _player == null or grid == null:
 		return
 	var idx: int = int(grid.call("get_selected"))
-	var r: String = _player.inventory.use_bag_expand_at(idx)
+	var entry: Dictionary = {}
+	if idx >= 0 and idx < _player.inventory.slots.size():
+		entry = _player.inventory.slots[idx]
+	var item_id := str(entry.get("id", ""))
+	var r: String = "wrong"
+	if item_id == "item_bag_expand":
+		r = _player.inventory.use_bag_expand_at(idx)
+		if r == "ok":
+			_player.show_toast(Loc.t("bag.expand_ok", [_player.inventory.max_slots()]))
+	elif item_id == "item_mind_potion":
+		r = _player.inventory.use_mind_potion_at(idx)
+		if r == "ok":
+			_player.show_toast(Loc.t("bag.mind_potion_ok", [MetaProgress.mind_value, MetaProgress.mind_value_max()]))
 	if r == "ok":
-		_player.show_toast(Loc.t("bag.expand_ok", [_player.inventory.max_slots()]))
 		refresh()
 		request_refresh.emit()
-	else:
+	elif r != "wrong":
 		_player.show_toast(Loc.t("bag.expand_fail"))

@@ -49,12 +49,6 @@ func _ready() -> void:
 		RunSession.begin_run()
 	extract_ui.visible = false
 	death_ui.visible = false
-	if hud.has_node("BagPanel"):
-		hud.get_node("BagPanel").visible = false
-	if hud.has_node("RuneReplace"):
-		hud.get_node("RuneReplace").visible = false
-	if hud.has_node("RunePanel"):
-		hud.get_node("RunePanel").visible = false
 	if hud.has_node("QuestPanel"):
 		hud.get_node("QuestPanel").visible = false
 	if hud.has_node("WarpPanel"):
@@ -342,7 +336,7 @@ func _spawn_player() -> void:
 		spawn_pos = _markers[sid]
 	player.global_position = spawn_pos
 	player.combat_enabled = true
-	player.apply_meta_loadout(RunSession.brand_quality)
+	player.apply_meta_brand(RunSession.brand_quality)
 	player.died.connect(_on_player_died)
 	player.toast.connect(_on_toast)
 	_reveal_around(player.global_position)
@@ -791,13 +785,10 @@ func _update_hud() -> void:
 	if hud.has_node("BagCountLabel"):
 		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.max_slots()])
 	var learned_n := MetaProgress.learned_runes.size()
-	var rune_text: String = Loc.t("hud.skills_learned", [learned_n]) if learned_n > 0 else Loc.t("hud.runes_none")
-	if hud.has_node("RunePanel/RuneScroll/RuneLabel"):
-		hud.get_node("RunePanel/RuneScroll/RuneLabel").text = rune_text
-		if hud.has_node("RunePanel/RuneTitle"):
-			hud.get_node("RunePanel/RuneTitle").text = Loc.t("hud.skills")
-	elif hud.has_node("RuneLabel"):
-		hud.get_node("RuneLabel").text = Loc.t("hud.skills") + "：\n" + rune_text
+	var skills_text: String = Loc.t("hud.skills_learned", [learned_n]) if learned_n > 0 else Loc.t("hud.runes_none")
+	var mind_line: String = Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()])
+	if hud.has_node("SkillsHudLabel"):
+		hud.get_node("SkillsHudLabel").text = "%s | %s" % [skills_text, mind_line]
 	var bname: String = Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
 	var rname := RegionCatalog.display_name(_current_region) if _current_region != "" else "—"
 	if hud.has_node("TopLeft/FloorLabel"):

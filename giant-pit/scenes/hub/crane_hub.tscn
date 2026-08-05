@@ -81,6 +81,10 @@ offset_left = 20.0
 offset_top = 48.0
 offset_right = 540.0
 offset_bottom = 200.0
+bbcode_enabled = false
+theme_override_colors/default_color = Color(0.92, 0.88, 0.8, 1)
+theme_override_font_sizes/normal_font_size = 14
+scroll_active = true
 
 [node name="StashGrid" type="GridContainer" parent="HUD/Panel" unique_id=2018355197]
 visible = false
@@ -94,6 +98,8 @@ script = ExtResource("2_grid")
 slot_count = 24
 columns_count = 6
 slot_size = Vector2(48, 48)
+selectable = true
+use_chrome = true
 
 [node name="BtnA" type="Button" parent="HUD/Panel" unique_id=2108141481]
 layout_mode = 0
@@ -130,8 +136,8 @@ text = "关闭"
 [node name="Tooltip" type="Label" parent="HUD/Panel" unique_id=1174183008]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 286.0
+offset_top = 248.0
 offset_right = 540.0
-offset_bottom = 340.0
-theme_override_font_sizes/font_size = 13
+offset_bottom = 296.0
+theme_override_font_sizes/font_size = 12
 autowrap_mode = 3

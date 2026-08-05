@@ -20,13 +20,18 @@ var learned_runes: Dictionary = {} ## rune_id -> true
 var active_quest_id: String = ""
 var intel: PackedStringArray = []
 var unlocked_warps: Array = [] ## ["warp_a", ...]
+var game_day: int = 1
+var entered_pit_today: bool = false
 
 const WARP_COST_ENTER := 15
 const WARP_COST_TRAVEL := 10
-const SHARD_TO_VALUE := 5
-const CORE_TO_VALUE := 25
 const MIND_VALUE_BASE := 40
 const MIND_VALUE_PER_LEVEL := 10
+const PAPER_FACE_VALUE := 100 ## 换出时标价（金币→券）
+const VOUCHER_SPEND_VALUE := 99 ## 购买/兑回时 1 张金币券折合金币
+const GOLD_TO_PAPER_COST := 100
+const MIND_POTION_PRICE := 200
+const MIND_POTION_RESTORE := 30
 
 
 func mind_value_max() -> int:
@@ -41,6 +46,117 @@ func mark_learned(rune_id: String) -> void:
 	learned_runes[rune_id] = true
 	changed.emit()
 	save_game()
+
+
+func advance_day() -> void:
+	game_day += 1
+	mind_value = mind_value_max()
+	entered_pit_today = false
+	changed.emit()
+	save_game()
+
+
+func mark_entered_pit() -> void:
+	entered_pit_today = true
+	changed.emit()
+	save_game()
+
+
+func can_enter_pit_today() -> bool:
+	return not entered_pit_today
+
+
+func restore_mind_value(amount: int) -> int:
+	var before := mind_value
+	mind_value = mini(mind_value + amount, mind_value_max())
+	if mind_value != before:
+		changed.emit()
+		save_game()
+	return mind_value - before
+
+
+func paper_note_count(from_stash: bool = true) -> int:
+	if from_stash:
+		return stash_count("item_paper_note")
+	return 0
+
+
+func spendable_gold() -> int:
+	## 金币 + 金币券按 VOUCHER_SPEND_VALUE 折算，购买时可不先兑成金币。
+	return gold + paper_note_count() * VOUCHER_SPEND_VALUE
+
+
+func can_afford_gold(cost: int) -> bool:
+	return cost <= 0 or spendable_gold() >= cost
+
+
+## 优先扣金币，不足再自动消耗金币券（每张折 99）。券超额部分退回金币。
+func try_spend_gold(cost: int) -> String:
+	if cost <= 0:
+		return "ok"
+	if not can_afford_gold(cost):
+		return "no_gold"
+	var remaining := cost
+	var take_gold := mini(gold, remaining)
+	gold -= take_gold
+	remaining -= take_gold
+	while remaining > 0:
+		if stash_count("item_paper_note") < 1:
+			## 理论上 can_afford 已保证，防御回滚
+			gold += take_gold
+			return "no_gold"
+		if not consume_stash({"item_paper_note": 1}):
+			gold += take_gold
+			return "no_gold"
+		remaining -= VOUCHER_SPEND_VALUE
+	if remaining < 0:
+		gold += -remaining
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func exchange_gold_to_paper(count: int = 1) -> String:
+	var cost := GOLD_TO_PAPER_COST * count
+	if gold < cost:
+		return "no_gold"
+	gold -= cost
+	add_stash("item_paper_note", count)
+	return "ok"
+
+
+func exchange_paper_to_gold(count: int = 1) -> String:
+	if stash_count("item_paper_note") < count:
+		return "no_paper"
+	if not consume_stash({"item_paper_note": count}):
+		return "no_paper"
+	gold += VOUCHER_SPEND_VALUE * count
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func buy_mind_potion(count: int = 1) -> String:
+	var cost := MIND_POTION_PRICE * count
+	var r := try_spend_gold(cost)
+	if r != "ok":
+		return r
+	add_stash("item_mind_potion", count)
+	return "ok"
+
+
+func sell_stash_material(mat_id: String, count: int = 1) -> String:
+	if not MaterialCatalog.MATERIALS.has(mat_id):
+		return "unknown"
+	if stash_count(mat_id) < count:
+		return "no_item"
+	var price := MaterialCatalog.sell_price(mat_id) * count
+	if not consume_stash({mat_id: count}):
+		return "no_item"
+	gold += price
+	changed.emit()
+	save_game()
+	return "ok"
 
 
 func _ready() -> void:
@@ -190,34 +306,6 @@ func try_absorb_mind() -> String:
 	return "ok"
 
 
-func try_convert_to_mind_value(prefer_core: bool = false) -> String:
-	## 转化 1 份材料为念力值
-	if prefer_core:
-		if stash_count("mind_core") >= 1:
-			if not consume_stash({"mind_core": 1}):
-				return "no_mats"
-			mind_value += CORE_TO_VALUE
-			changed.emit()
-			save_game()
-			return "ok"
-		return "no_mats"
-	if stash_count("mind_shard") >= 1:
-		if not consume_stash({"mind_shard": 1}):
-			return "no_mats"
-		mind_value += SHARD_TO_VALUE
-		changed.emit()
-		save_game()
-		return "ok"
-	if stash_count("mind_core") >= 1:
-		if not consume_stash({"mind_core": 1}):
-			return "no_mats"
-		mind_value += CORE_TO_VALUE
-		changed.emit()
-		save_game()
-		return "ok"
-	return "no_mats"
-
-
 func can_afford_mind(n: int) -> bool:
 	return mind_value >= n
 
@@ -345,6 +433,8 @@ func to_dict() -> Dictionary:
 		"active_quest_id": active_quest_id,
 		"intel": Array(intel),
 		"unlocked_warps": unlocked_warps.duplicate(),
+		"game_day": game_day,
+		"entered_pit_today": entered_pit_today,
 	}
 
 
@@ -362,6 +452,8 @@ func from_dict(data: Dictionary) -> void:
 	unlocked_warps = data.get("unlocked_warps", [])
 	if typeof(unlocked_warps) != TYPE_ARRAY:
 		unlocked_warps = []
+	game_day = int(data.get("game_day", 1))
+	entered_pit_today = bool(data.get("entered_pit_today", false))
 	_ensure_equipment()
 
 

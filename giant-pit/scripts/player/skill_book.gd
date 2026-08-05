@@ -42,14 +42,20 @@ func rune_for_slot(slot: String) -> String:
 
 
 func is_slot_unlocked(slot: String) -> bool:
+	if slot == SLOT_DEFEND:
+		return has("rune_s_ironwall")
+	if slot == SLOT_ULTIMATE:
+		return false
 	return slot in MVP_ACTIVE_SLOTS or rune_for_slot(slot) != ""
 
 
 ## source: Inventory（坑内）或 null+stash（枢纽）
-## 返回 "ok" | "unknown" | "learned" | "no_rune" | "mind_level" | "no_mind" | "stash"
-func try_learn(rune_id: String, inventory = null, from_stash: bool = false) -> String:
+## 返回 "ok" | "unknown" | "learned" | "no_rune" | "mind_level" | "no_mind" | "brand" | "stash"
+func try_learn(rune_id: String, inventory = null, from_stash: bool = false, brand_quality: String = "iron") -> String:
 	if not RuneCatalog.DEFS.has(rune_id):
 		return "unknown"
+	if not RuneCatalog.matches_brand(rune_id, brand_quality):
+		return "brand"
 	if has(rune_id):
 		return "learned"
 	var req := RuneCatalog.mind_level_req(rune_id)

@@ -215,12 +215,20 @@ func _spawn_drops() -> void:
 	mat.setup(0, drop_mat_id, 1) ## MATERIAL
 	if randf() < drop_rune_chance:
 		var RuneCatalog = load("res://scripts/items/rune_catalog.gd")
-		var pool: Array = RuneCatalog.DROP_POOL
+		var pool: Array = RuneCatalog.DROP_POOL if _uses_full_rune_pool() else RuneCatalog.DROP_POOL_LOW
 		var rid: String = str(pool[randi() % pool.size()])
 		var rune := PickupScene.instantiate()
 		parent.add_child(rune)
 		rune.global_position = global_position + Vector2(randf_range(-28, 28), randf_range(-28, 28))
 		rune.setup(1, rid, 1) ## RUNE
+
+
+func _uses_full_rune_pool() -> bool:
+	if is_boss or quest_scale:
+		return true
+	if enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
+		return true
+	return false
 
 
 func _update_hp_label() -> void:
