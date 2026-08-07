@@ -19,8 +19,11 @@
 
 | ID | 模式 | 路径 |
 |----|------|------|
-| `{moss,copper,echo}_{mob,elite,guard}` | 三区敌人 | `res://assets/enemies/side/` |
-| `floor_boss` | 层 BOSS | `res://assets/enemies/side/floor_boss.png` |
+| `side_melee` / `side_ranged` / `side_flyer` | 三种普通原型 | `res://assets/enemies/side/side_*.png` |
+| `side_elite` | 精英 | `res://assets/enemies/side/side_elite.png` |
+| `side_boss` | 层 BOSS | `res://assets/enemies/side/side_boss.png` |
+| `proj_spore` / `proj_shock` | 敌弹 | `res://assets/enemies/side/proj_*.png` |
+| `{moss,copper,echo}_{mob,elite,guard}` | 旧三区占位（归档） | `res://assets/enemies/side/` |
 | `dummy_post` | 木桩 | `res://assets/enemies/side/dummy_post.png` |
 
 ## Side-view Tiles & Parallax（坑内现行）

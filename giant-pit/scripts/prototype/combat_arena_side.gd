@@ -2,6 +2,8 @@ extends Node2D
 ## 阶段 A：横版刀手感原型。
 
 const AtmosphereScript = preload("res://scripts/fx/scene_atmosphere.gd")
+const SideEnemyScene = preload("res://scenes/enemy/side_enemy.tscn")
+const ST = preload("res://scripts/pit/segment_types.gd")
 
 const TILE_SIZE := 32.0
 const GROUND_Y := 120.0
@@ -11,6 +13,7 @@ const ARENA_WIDTH := 640.0
 
 @onready var hint: Label = $Hint/HintLabel
 @onready var terrain: Node2D = $Terrain
+@onready var enemies: Node2D = $Enemies
 
 var _atmosphere: Node2D
 
@@ -23,8 +26,24 @@ func _ready() -> void:
 		player.apply_meta_brand("iron")
 	_atmosphere = AtmosphereScript.install(self, self, "arena")
 	_build_arena()
+	_spawn_test_enemies()
 	if run_smoke_test:
 		_smoke()
+
+
+func _spawn_test_enemies() -> void:
+	for c in enemies.get_children():
+		c.queue_free()
+	var positions: Array = [Vector2(120, 88), Vector2(200, 88)]
+	var defs: Array = [
+		ST.enemy_def("side_melee", "", {"hp": 50.0}),
+		ST.enemy_def("side_ranged", "", {"hp": 40.0}),
+	]
+	for i in defs.size():
+		var e = SideEnemyScene.instantiate()
+		enemies.add_child(e)
+		e.configure(defs[i])
+		e.global_position = positions[i]
 
 
 func _build_arena() -> void:

@@ -20,6 +20,12 @@ const NAME_KEYS := {
 	"guard_b": "enemy.guard_b",
 	"guard_c": "enemy.guard_c",
 	"boss_floor1": "enemy.boss_floor1",
+	"side_melee": "enemy.side_melee",
+	"side_ranged": "enemy.side_ranged",
+	"side_flyer": "enemy.side_flyer",
+	"side_elite": "enemy.side_elite",
+	"side_boss": "enemy.side_boss",
+	"floor_boss": "enemy.side_boss",
 }
 
 

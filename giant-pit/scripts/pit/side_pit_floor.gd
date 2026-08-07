@@ -32,6 +32,10 @@ const TILE_SIZE := 32.0
 @onready var btn_keep: Button = $HUD/SettlePanel/BtnKeep
 @onready var btn_hub: Button = $HUD/SettlePanel/BtnHub
 @onready var btn_extract: Button = $HUD/BtnExtract
+@onready var boss_hud: Control = $HUD/BossHud
+@onready var boss_name_label: Label = $HUD/BossHud/BossName
+@onready var boss_hp_bar: ProgressBar = $HUD/BossHud/BossHpBar
+@onready var boss_poise_bar: ProgressBar = $HUD/BossHud/BossPoiseBar
 
 var graph: Dictionary = {}
 var nodes_by_id: Dictionary = {}
@@ -45,6 +49,7 @@ var _mud_zones: Array = []
 var _fog_zones: Array = []
 var _map_chip_by_id: Dictionary = {}
 var _atmosphere: Node2D
+var _active_boss: Node = null
 
 
 func _ready() -> void:
@@ -71,6 +76,8 @@ func _ready() -> void:
 	if erosion_icon and ResourceLoader.exists("res://assets/ui/side/erosion.png"):
 		erosion_icon.texture = load("res://assets/ui/side/erosion.png")
 		erosion_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	if boss_hud:
+		boss_hud.visible = false
 
 	_atmosphere = AtmosphereScript.install(world, self, ST.BIOME_MOSS)
 
@@ -156,6 +163,7 @@ func _enter_node(node_id: String, teleport: bool = false) -> void:
 
 
 func _clear_entities() -> void:
+	_hide_boss_hud()
 	for c in entities.get_children():
 		c.queue_free()
 	for c in terrain.get_children():
@@ -260,79 +268,54 @@ func _spawn_node_content(node: Dictionary) -> void:
 	match str(node["type"]):
 		ST.NODE_COMBAT:
 			var n_mobs := int(node.get("mobs", 2))
+			var types: Array = ST.COMBAT_ARCHETYPES.duplicate()
+			types.shuffle()
 			for i in n_mobs:
-				_spawn_enemy({
-					"id": pool["mob"],
-					"hp": 32.0,
-					"dmg": 7.0,
-					"drop": pool["drop"],
-					"icon": "res://assets/enemies/side/%s.png" % pool["mob"],
-				}, Vector2(280 + i * 90, GROUND_Y - 40))
+				var arch: String = str(types[i % types.size()])
+				var def: Dictionary = ST.combat_archetype_def(arch, pool["drop"])
+				_spawn_enemy(def, Vector2(260 + i * 100, GROUND_Y - 40))
 		ST.NODE_ELITE:
 			var awaken := ST.AWAKEN_MAT_WHIRL if biome == ST.BIOME_MOSS else ST.AWAKEN_MAT_IRON
 			if biome == ST.BIOME_ECHO:
 				awaken = ST.AWAKEN_MAT_WHIRL
-			_spawn_enemy({
-				"id": pool["elite"],
-				"hp": 90.0,
-				"dmg": 12.0,
-				"drop": pool["drop"],
-				"awaken": awaken,
-				"rune": 0.25,
-				"icon": "res://assets/enemies/side/%s.png" % pool["elite"],
-				"speed": 85.0,
-			}, Vector2(320, GROUND_Y - 40))
-			## 吐息日额外精英
+			var elite_def: Dictionary = ST.enemy_def("side_elite", pool["drop"], {"awaken": awaken})
+			_spawn_enemy(elite_def, Vector2(320, GROUND_Y - 40))
 			if MetaProgress.is_breath_day():
-				_spawn_enemy({
+				_spawn_enemy(ST.enemy_def("side_elite", "mind_core", {
 					"id": "breath_elite",
-					"hp": 70.0,
-					"dmg": 10.0,
-					"drop": "mind_core",
-					"icon": "res://assets/enemies/side/%s.png" % pool["elite"],
-				}, Vector2(400, GROUND_Y - 40))
+					"hp": 100.0,
+					"dmg": 12.0,
+				}), Vector2(400, GROUND_Y - 40))
 		ST.NODE_RESOURCE:
 			_spawn_interactable(ST.NODE_RESOURCE, Vector2(300, GROUND_Y - 24), {"mat_id": pool["drop"]})
 		ST.NODE_WARP:
 			var wid := str(node.get("warp_id", ""))
 			_spawn_interactable(ST.NODE_WARP, Vector2(280, GROUND_Y - 24), {"warp_id": wid})
 			if not RunSession.is_warp_active(wid):
-				_spawn_enemy({
-					"id": pool["guard"],
+				var guard_def: Dictionary = ST.enemy_def("side_melee", pool["drop"], {
 					"hp": 60.0,
 					"dmg": 10.0,
-					"drop": pool["drop"],
+					"poise": 40.0,
 					"warp": wid,
-					"icon": "res://assets/enemies/side/%s.png" % pool["guard"],
-				}, Vector2(340, GROUND_Y - 40))
+				})
+				_spawn_enemy(guard_def, Vector2(340, GROUND_Y - 40))
 		ST.NODE_SHORTCUT:
 			_spawn_interactable(ST.NODE_SHORTCUT, Vector2(300, GROUND_Y - 24), {"shortcut_id": str(node.get("shortcut_id", ""))})
 		ST.NODE_EXTRACT:
 			_spawn_interactable(ST.NODE_EXTRACT, Vector2(300, GROUND_Y - 24), {})
 		ST.NODE_BOSS:
-			_spawn_enemy({
-				"id": "floor_boss",
-				"hp": 220.0,
-				"dmg": 16.0,
-				"drop": "mind_core",
-				"awaken": ST.AWAKEN_MAT_IRON,
-				"is_boss": true,
-				"rune": 0.5,
-				"icon": "res://assets/enemies/side/floor_boss.png",
-				"speed": 60.0,
-			}, Vector2(360, GROUND_Y - 48))
+			var boss_def: Dictionary = ST.enemy_def("side_boss", "mind_core", {"awaken": ST.AWAKEN_MAT_IRON})
+			_spawn_enemy(boss_def, Vector2(360, GROUND_Y - 48))
 		ST.NODE_DESCENT:
 			_spawn_interactable(ST.NODE_DESCENT, Vector2(300, GROUND_Y - 24), {})
 		ST.NODE_QUEST:
 			_spawn_interactable(ST.NODE_QUEST, Vector2(300, GROUND_Y - 24), {})
-			_spawn_enemy({
+			_spawn_enemy(ST.enemy_def("side_melee", pool["drop"], {
+				"quest_scale": true,
 				"id": "scale_rock",
 				"hp": 45.0,
 				"dmg": 8.0,
-				"drop": pool["drop"],
-				"quest_scale": true,
-				"icon": "res://assets/enemies/side/%s.png" % pool["mob"],
-			}, Vector2(380, GROUND_Y - 40))
+			}), Vector2(380, GROUND_Y - 40))
 		ST.NODE_EVENT:
 			player.show_toast(Loc.t("toast.event_minor"))
 		_:
@@ -349,6 +332,42 @@ func _spawn_enemy(def: Dictionary, pos: Vector2) -> void:
 	entities.add_child(e)
 	e.global_position = pos
 	e.configure(def)
+	if bool(def.get("is_boss", false)):
+		_bind_boss_hud(e)
+
+
+func _bind_boss_hud(boss: Node) -> void:
+	_active_boss = boss
+	if boss_hud:
+		boss_hud.visible = true
+	if boss_name_label and boss.has_method("get_display_name"):
+		boss_name_label.text = boss.get_display_name()
+	if boss.has_signal("stats_changed"):
+		if not boss.stats_changed.is_connected(_on_boss_stats):
+			boss.stats_changed.connect(_on_boss_stats)
+	if boss.has_signal("died_with_id"):
+		if not boss.died_with_id.is_connected(_on_boss_died):
+			boss.died_with_id.connect(_on_boss_died)
+	_on_boss_stats(boss.hp, boss.max_hp, boss.poise, boss.max_poise)
+
+
+func _hide_boss_hud() -> void:
+	_active_boss = null
+	if boss_hud:
+		boss_hud.visible = false
+
+
+func _on_boss_stats(hp: float, max_hp: float, poise: float, max_poise: float) -> void:
+	if boss_hp_bar:
+		boss_hp_bar.max_value = max_hp
+		boss_hp_bar.value = hp
+	if boss_poise_bar:
+		boss_poise_bar.max_value = max_poise
+		boss_poise_bar.value = poise
+
+
+func _on_boss_died(_enemy_id: String, _meta: Dictionary) -> void:
+	_hide_boss_hud()
 
 
 func _spawn_interactable(itype: String, pos: Vector2, extra: Dictionary) -> void:
@@ -706,10 +725,6 @@ func _node_type_color(t: String) -> Color:
 func _on_reinforcement(at: Vector2, biome: String) -> void:
 	var pool: Dictionary = ST.ENEMY_POOL.get(biome, ST.ENEMY_POOL[ST.BIOME_MOSS])
 	player.show_toast(Loc.t("toast.echo_reinforce"))
-	_spawn_enemy({
-		"id": pool["mob"],
-		"hp": 28.0,
-		"dmg": 6.0,
-		"drop": pool["drop"],
-		"icon": "res://assets/enemies/side/%s.png" % pool["mob"],
-	}, at + Vector2(80, 0))
+	var arch: String = ST.COMBAT_ARCHETYPES[randi() % ST.COMBAT_ARCHETYPES.size()]
+	var def: Dictionary = ST.combat_archetype_def(arch, pool["drop"], {"hp": 28.0, "dmg": 6.0})
+	_spawn_enemy(def, at + Vector2(80, 0))

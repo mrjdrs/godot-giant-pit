@@ -41,6 +41,7 @@ const LIGHT_COMBO := [
 		"recovery": 0.14,
 		"damage": 8.0,
 		"knockback": 130.0,
+		"poise": 10.0,
 		"hit_size": Vector2(38, 22),
 		"hit_offset": Vector2(26, 0),
 		"swing_from": -48.0,
@@ -53,6 +54,7 @@ const LIGHT_COMBO := [
 		"recovery": 0.15,
 		"damage": 10.0,
 		"knockback": 150.0,
+		"poise": 12.0,
 		"hit_size": Vector2(34, 36),
 		"hit_offset": Vector2(22, -10),
 		"swing_from": -20.0,
@@ -65,6 +67,7 @@ const LIGHT_COMBO := [
 		"recovery": 0.28,
 		"damage": 14.0,
 		"knockback": 220.0,
+		"poise": 16.0,
 		"hit_size": Vector2(44, 34),
 		"hit_offset": Vector2(28, 4),
 		"swing_from": -95.0,
@@ -78,6 +81,7 @@ const HEAVY_ACTIVE := 0.14
 const HEAVY_RECOVERY := 0.36
 const HEAVY_DAMAGE := 22.0
 const HEAVY_KNOCKBACK := 260.0
+const HEAVY_POISE := 22.0
 const BLADE_ART_OFFSET_DEG := 90.0
 const DEFEND_DAMAGE_MULT := 0.5
 const DEFEND_MOVE_MULT := 0.45
@@ -597,7 +601,8 @@ func _tick_attack(delta: float) -> void:
 				_combo_def = _combo_profile(combo_step)
 			var dmg: float = float(_combo_def["damage"]) * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)
 			var kb: float = float(_combo_def["knockback"])
-			hitbox.enable(_roll_attack_damage(dmg), kb, self)
+			var poise: float = float(_combo_def.get("poise", kb * 0.08))
+			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
 			blade_swing_deg = float(_combo_def["swing_to"])
 			_apply_blade_visual()
 			_attack_phase = AttackPhase.LIGHT_ACTIVE
@@ -623,7 +628,7 @@ func _tick_attack(delta: float) -> void:
 				if combo_step >= LIGHT_COMBO_MAX:
 					combo_step = 0
 		AttackPhase.HEAVY_WINDUP:
-			hitbox.enable(_roll_attack_damage(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), _attack_kb, self)
+			hitbox.enable(_roll_attack_damage(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), _attack_kb, self, HEAVY_POISE)
 			blade_swing_deg = 60.0
 			blade_sprite.scale = Vector2.ONE
 			_apply_blade_visual()

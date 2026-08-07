@@ -4,6 +4,7 @@ signal hit(hurtbox: Area2D)
 
 var damage: float = 1.0
 var knockback_force: float = 120.0
+var poise_damage: float = 10.0
 var source: Node2D = null
 
 var _active: bool = false
@@ -23,9 +24,10 @@ func configure_layers(layer_bit: int, mask_bit: int) -> void:
 	collision_mask = mask_bit
 
 
-func enable(p_damage: float, p_knockback: float, p_source: Node2D = null) -> void:
+func enable(p_damage: float, p_knockback: float, p_source: Node2D = null, p_poise: float = -1.0) -> void:
 	damage = p_damage
 	knockback_force = p_knockback
+	poise_damage = p_poise if p_poise >= 0.0 else p_knockback * 0.08
 	source = p_source
 	_hit_ids.clear()
 	_active = true

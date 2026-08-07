@@ -18,6 +18,8 @@ script = ExtResource("1_arena")
 
 [node name="Terrain" type="Node2D" parent="."]
 
+[node name="Enemies" type="Node2D" parent="."]
+
 [node name="Player" parent="." instance=ExtResource("2_player")]
 position = Vector2(-80, 80)
 

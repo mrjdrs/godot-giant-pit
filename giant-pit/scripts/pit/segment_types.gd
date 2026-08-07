@@ -31,5 +31,85 @@ const ENEMY_POOL := {
 	BIOME_ECHO: {"mob": "echo_mob", "elite": "echo_elite", "guard": "echo_guard", "drop": "mind_shard"},
 }
 
+const ARCHETYPE_MELEE := "melee"
+const ARCHETYPE_RANGED := "ranged"
+const ARCHETYPE_FLYER := "flyer"
+const ARCHETYPE_ELITE := "elite"
+const ARCHETYPE_BOSS := "boss"
+
+const COMBAT_ARCHETYPES := [ARCHETYPE_MELEE, ARCHETYPE_RANGED, ARCHETYPE_FLYER]
+
+const ENEMY_DEFS := {
+	"side_melee": {
+		"id": "side_melee",
+		"archetype": ARCHETYPE_MELEE,
+		"hp": 40.0,
+		"dmg": 9.0,
+		"poise": 30.0,
+		"speed": 75.0,
+		"icon": "res://assets/enemies/side/side_melee.png",
+	},
+	"side_ranged": {
+		"id": "side_ranged",
+		"archetype": ARCHETYPE_RANGED,
+		"hp": 32.0,
+		"dmg": 7.0,
+		"poise": 22.0,
+		"speed": 65.0,
+		"icon": "res://assets/enemies/side/side_ranged.png",
+	},
+	"side_flyer": {
+		"id": "side_flyer",
+		"archetype": ARCHETYPE_FLYER,
+		"hp": 28.0,
+		"dmg": 8.0,
+		"poise": 18.0,
+		"speed": 80.0,
+		"icon": "res://assets/enemies/side/side_flyer.png",
+	},
+	"side_elite": {
+		"id": "side_elite",
+		"archetype": ARCHETYPE_ELITE,
+		"hp": 140.0,
+		"dmg": 16.0,
+		"poise": 80.0,
+		"speed": 70.0,
+		"icon": "res://assets/enemies/side/side_elite.png",
+		"rune": 0.25,
+	},
+	"side_boss": {
+		"id": "side_boss",
+		"archetype": ARCHETYPE_BOSS,
+		"hp": 320.0,
+		"dmg": 18.0,
+		"poise": 140.0,
+		"speed": 55.0,
+		"icon": "res://assets/enemies/side/side_boss.png",
+		"is_boss": true,
+		"rune": 0.5,
+	},
+}
+
+const ARCHETYPE_TO_ID := {
+	ARCHETYPE_MELEE: "side_melee",
+	ARCHETYPE_RANGED: "side_ranged",
+	ARCHETYPE_FLYER: "side_flyer",
+	ARCHETYPE_ELITE: "side_elite",
+	ARCHETYPE_BOSS: "side_boss",
+}
+
+
+static func enemy_def(enemy_key: String, drop_mat: String = "", overrides: Dictionary = {}) -> Dictionary:
+	var def: Dictionary = ENEMY_DEFS.get(enemy_key, ENEMY_DEFS["side_melee"]).duplicate(true)
+	if drop_mat != "":
+		def["drop"] = drop_mat
+	def.merge(overrides, true)
+	return def
+
+
+static func combat_archetype_def(archetype: String, drop_mat: String = "", overrides: Dictionary = {}) -> Dictionary:
+	var key: String = str(ARCHETYPE_TO_ID.get(archetype, "side_melee"))
+	return enemy_def(key, drop_mat, overrides)
+
 const AWAKEN_MAT_WHIRL := "mat_whirl_edge"
 const AWAKEN_MAT_IRON := "mat_iron_guard"

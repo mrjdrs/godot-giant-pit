@@ -446,6 +446,53 @@ def draw_hub_pit_mouth() -> Image.Image:
     return img
 
 
+def draw_archetype_enemy(kind: str) -> Image.Image:
+    w, h = (40, 56) if kind == "boss" else (32, 48)
+    img = new_img(w, h)
+    ox = 4 if kind == "boss" else 0
+    if kind == "melee":
+        shade_rect(img, 10 + ox, 14, 12, 22, MOSS, MOSS2, MOSS3)
+        shade_rect(img, 8 + ox, 36, 6, 6, METAL3, METAL, METAL2)
+        shade_rect(img, 18 + ox, 36, 6, 6, METAL3, METAL, METAL2)
+        fill_rect(img, 14 + ox, 10, 8, 4, GREEN2)
+        shade_rect(img, 22 + ox, 18, 8, 4, METAL, METAL2, METAL3)
+    elif kind == "ranged":
+        shade_rect(img, 11 + ox, 16, 10, 20, COPPER, COPPER2, COPPER3)
+        shade_rect(img, 8 + ox, 22, 6, 10, WOOD, WOOD3, WOOD2)
+        fill_rect(img, 20 + ox, 20, 6, 6, GREEN)
+        px(img, 24 + ox, 22, GREEN2)
+    elif kind == "flyer":
+        shade_rect(img, 12 + ox, 18, 8, 12, DEEP, CRYSTAL, DEEP3)
+        fill_rect(img, 6 + ox, 20, 8, 3, CRYSTAL2)
+        fill_rect(img, 18 + ox, 20, 8, 3, CRYSTAL2)
+        fill_rect(img, 14 + ox, 12, 4, 4, GOLD)
+    elif kind == "elite":
+        shade_rect(img, 8 + ox, 10, 16, 26, MOSS, MOSS2, MOSS3)
+        shade_rect(img, 10 + ox, 12, 12, 8, METAL2, METAL, METAL3)
+        shade_rect(img, 20 + ox, 16, 6, 16, COPPER, COPPER2, COPPER3)
+        fill_rect(img, 12 + ox, 8, 8, 4, GOLD)
+    elif kind == "boss":
+        shade_rect(img, 8, 8, 24, 36, DEEP, DEEP2, DEEP3)
+        shade_rect(img, 10, 12, 20, 10, COPPER, COPPER2, COPPER3)
+        fill_rect(img, 14, 6, 12, 6, GOLD)
+        shade_rect(img, 6, 40, 8, 8, STONE3, STONE, STONE2)
+        shade_rect(img, 26, 40, 8, 8, STONE3, STONE, STONE2)
+    px(img, 18 + ox, 20, RED)
+    outline_rect(img, 10 + ox, 14 if kind != "boss" else 8, 12 if kind != "boss" else 24, 22 if kind != "boss" else 36, INK)
+    return img
+
+
+def draw_projectile(kind: str) -> Image.Image:
+    img = new_img(16, 16)
+    if kind == "shock":
+        fill_rect(img, 2, 6, 12, 4, CRYSTAL)
+        fill_rect(img, 6, 2, 4, 12, CRYSTAL2)
+    else:
+        fill_rect(img, 4, 4, 8, 8, GREEN2)
+        fill_rect(img, 6, 6, 4, 4, FOG)
+    return img
+
+
 def main() -> None:
     for pose in ("idle", "run", "jump", "light", "light1", "light2", "light3", "heavy", "dodge"):
         save(draw_player_side(pose), f"characters/player/side/player_{pose}.png")
@@ -462,6 +509,10 @@ def main() -> None:
             save(draw_tile("mud", "moss"), "tiles/side/moss/mud.png")
             save(draw_tile("fog", "moss"), "tiles/side/moss/fog.png")
     save(draw_enemy_side("echo", "boss"), "enemies/side/floor_boss.png")
+    for arch in ("melee", "ranged", "flyer", "elite", "boss"):
+        save(draw_archetype_enemy(arch), f"enemies/side/side_{arch}.png")
+    save(draw_projectile("spore"), "enemies/side/proj_spore.png")
+    save(draw_projectile("shock"), "enemies/side/proj_shock.png")
     for prop in ("extract", "warp", "gather", "shortcut", "descent", "winch", "spotlight"):
         save(draw_prop(prop), f"props/side/{prop}.png")
     for icon in ("erosion", "rule_moss", "rule_copper", "rule_echo", "map_node", "map_hidden"):
