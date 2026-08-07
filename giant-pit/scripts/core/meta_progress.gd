@@ -67,13 +67,12 @@ func advance_day() -> void:
 
 
 func mark_entered_pit() -> void:
-	entered_pit_today = true
+	## 已取消「每日仅入坑 1 次」限制；保留接口以免旧调用报错。
 	changed.emit()
-	save_game()
 
 
 func can_enter_pit_today() -> bool:
-	return not entered_pit_today
+	return true
 
 
 func is_shortcut_unlocked(shortcut_id: String) -> bool:

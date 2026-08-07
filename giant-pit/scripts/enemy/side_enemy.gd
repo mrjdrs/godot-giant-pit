@@ -28,6 +28,8 @@ var _flash: float = 0.0
 var _dead: bool = false
 var _patrol_origin: Vector2 = Vector2.ZERO
 var aggro_mult: float = 1.0
+var _hitstun: float = 0.0
+var _base_scale: Vector2 = Vector2.ONE
 
 
 func _ready() -> void:
@@ -44,6 +46,7 @@ func _ready() -> void:
 	hurtbox.hurt.connect(_on_hurt)
 	hp = max_hp
 	_patrol_origin = global_position
+	_base_scale = scale
 
 
 func configure(def: Dictionary) -> void:
@@ -63,6 +66,7 @@ func configure(def: Dictionary) -> void:
 		sprite.texture = load(icon_path)
 	if is_boss:
 		scale = Vector2(1.35, 1.35)
+		_base_scale = scale
 
 
 func _physics_process(delta: float) -> void:
@@ -70,9 +74,16 @@ func _physics_process(delta: float) -> void:
 		return
 	if _flash > 0.0:
 		_flash -= delta
-		sprite.modulate = Color(2, 2, 2) if fmod(_flash, 0.08) < 0.04 else Color.WHITE
+		sprite.modulate = Color(2.4, 2.4, 2.4) if fmod(_flash, 0.06) < 0.03 else Color(1.6, 0.9, 0.9)
 		if _flash <= 0.0:
 			sprite.modulate = Color.WHITE
+	if _hitstun > 0.0:
+		_hitstun -= delta
+		velocity.x = move_toward(velocity.x, 0.0, 800.0 * delta)
+		if not is_on_floor():
+			velocity.y += 980.0 * delta
+		move_and_slide()
+		return
 	if _cd > 0.0:
 		_cd -= delta
 
@@ -101,7 +112,7 @@ func _physics_process(delta: float) -> void:
 
 
 func _try_hit(player: Node) -> void:
-	if _cd > 0.0:
+	if _cd > 0.0 or _hitstun > 0.0:
 		return
 	_cd = attack_cooldown
 	if player.has_method("take_damage"):
@@ -115,12 +126,19 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var knock: float = float(hitbox.get("knockback_force"))
 	var src = hitbox.get("source")
 	hp = maxf(hp - dmg, 0.0)
-	_flash = 0.15
+	_flash = 0.22
 	var dir := 1.0
 	if src is Node2D:
 		dir = signf(global_position.x - (src as Node2D).global_position.x)
-	velocity.x = dir * knock * 0.5
-	velocity.y = -60.0
+		if dir == 0.0:
+			dir = 1.0
+	## 砍中感：更强击退 + 短暂硬直 + 挤压缩放
+	_hitstun = 0.18
+	velocity.x = dir * knock * 0.85
+	velocity.y = -90.0
+	scale = _base_scale * Vector2(1.18, 0.82)
+	var tw := create_tween()
+	tw.tween_property(self, "scale", _base_scale, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	if hp <= 0.0:
 		_die()
 

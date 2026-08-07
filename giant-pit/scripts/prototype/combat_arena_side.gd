@@ -17,21 +17,17 @@ func _ready() -> void:
 
 
 func _smoke() -> void:
-	await get_tree().create_timer(0.5).timeout
+	await get_tree().create_timer(0.4).timeout
 	var player := $Player
 	var dummy := $DummyEnemy
 	if player == null or dummy == null:
 		return
 	player.global_position = Vector2(20, 80)
 	dummy.global_position = Vector2(60, 88)
-	player.call("_start_light_attack", Vector2.RIGHT)
-	await get_tree().create_timer(0.45).timeout
-	print("smoke light hp=", dummy.get("hp"))
-	player.call("_start_heavy_attack", Vector2.RIGHT)
-	await get_tree().create_timer(0.9).timeout
-	print("smoke heavy hp=", dummy.get("hp"))
-	player.velocity.y = -320.0
-	await get_tree().create_timer(0.12).timeout
-	player.call("_start_light_attack", Vector2.RIGHT)
-	await get_tree().create_timer(0.5).timeout
-	print("smoke done hp=", dummy.get("hp"), " player_y=", player.global_position.y)
+	## 三段连斩
+	for _i in 3:
+		player.set("combo_window", 0.4)
+		player.call("_start_light_attack", Vector2.RIGHT)
+		await get_tree().create_timer(0.55).timeout
+		print("smoke combo step=", player.get("combo_step"), " hp=", dummy.get("hp"))
+	print("smoke done hp=", dummy.get("hp"))

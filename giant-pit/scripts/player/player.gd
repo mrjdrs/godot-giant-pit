@@ -32,6 +32,46 @@ const LIGHT_ACTIVE := 0.10
 const LIGHT_RECOVERY := 0.16
 const LIGHT_DAMAGE := 8.0
 const LIGHT_KNOCKBACK := 140.0
+const LIGHT_COMBO_MAX := 3
+## 三段普攻：平斩 / 斜上斩 / 下劈收势（风前摇、判定、硬直、伤、击退、判定盒、挥刀角）
+const LIGHT_COMBO := [
+	{
+		"windup": 0.07,
+		"active": 0.10,
+		"recovery": 0.14,
+		"damage": 8.0,
+		"knockback": 130.0,
+		"hit_size": Vector2(38, 22),
+		"hit_offset": Vector2(26, 0),
+		"swing_from": -48.0,
+		"swing_to": 42.0,
+		"lunge": 28.0,
+	},
+	{
+		"windup": 0.08,
+		"active": 0.11,
+		"recovery": 0.15,
+		"damage": 10.0,
+		"knockback": 150.0,
+		"hit_size": Vector2(34, 36),
+		"hit_offset": Vector2(22, -10),
+		"swing_from": -20.0,
+		"swing_to": 78.0,
+		"lunge": 18.0,
+	},
+	{
+		"windup": 0.14,
+		"active": 0.13,
+		"recovery": 0.28,
+		"damage": 14.0,
+		"knockback": 220.0,
+		"hit_size": Vector2(44, 34),
+		"hit_offset": Vector2(28, 4),
+		"swing_from": -95.0,
+		"swing_to": 70.0,
+		"lunge": 42.0,
+	},
+]
 
 const HEAVY_WINDUP := 0.28
 const HEAVY_ACTIVE := 0.14
@@ -98,8 +138,15 @@ var _tex_idle: Texture2D
 var _tex_run: Texture2D
 var _tex_jump: Texture2D
 var _tex_light: Texture2D
+var _tex_light1: Texture2D
+var _tex_light2: Texture2D
+var _tex_light3: Texture2D
 var _tex_heavy: Texture2D
 var _tex_dodge: Texture2D
+var _light_buffered: bool = false
+var _combo_def: Dictionary = {}
+var _camera_shake: float = 0.0
+var _camera_origin: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -112,6 +159,8 @@ func _ready() -> void:
 	_set_hitbox_size(Vector2(28, 22), Vector2(22, -4))
 	_load_side_textures()
 	_apply_blade_visual()
+	if has_node("Camera2D"):
+		_camera_origin = $Camera2D.offset
 	inventory.changed.connect(func(): inventory_changed.emit())
 	skills.changed.connect(_on_skills_changed)
 	MetaProgress.changed.connect(_on_meta_changed)
@@ -126,6 +175,9 @@ func _load_side_textures() -> void:
 	_tex_run = load("res://assets/characters/player/side/player_run.png")
 	_tex_jump = load("res://assets/characters/player/side/player_jump.png")
 	_tex_light = load("res://assets/characters/player/side/player_light.png")
+	_tex_light1 = load("res://assets/characters/player/side/player_light1.png")
+	_tex_light2 = load("res://assets/characters/player/side/player_light2.png")
+	_tex_light3 = load("res://assets/characters/player/side/player_light3.png")
 	_tex_heavy = load("res://assets/characters/player/side/player_heavy.png")
 	_tex_dodge = load("res://assets/characters/player/side/player_dodge.png")
 	if _tex_idle:
@@ -174,6 +226,19 @@ func _physics_process(delta: float) -> void:
 
 	move_and_slide()
 	_update_visuals()
+	_tick_camera_shake(delta)
+
+
+func _tick_camera_shake(delta: float) -> void:
+	if not has_node("Camera2D"):
+		return
+	var cam: Camera2D = $Camera2D
+	if _camera_shake > 0.0:
+		_camera_shake = maxf(_camera_shake - delta, 0.0)
+		var mag := 3.5 * (_camera_shake / 0.12)
+		cam.offset = _camera_origin + Vector2(randf_range(-mag, mag), randf_range(-mag, mag))
+	else:
+		cam.offset = _camera_origin
 
 
 func _process(_delta: float) -> void:
@@ -191,7 +256,15 @@ func _handle_combat_input() -> void:
 		return
 	if state == State.ROLL:
 		return
-	if state == State.ATTACK_LIGHT or state == State.ATTACK_HEAVY:
+	## 普攻连段：判定/硬直期可缓冲下一段
+	if state == State.ATTACK_LIGHT:
+		if Input.is_action_just_pressed("attack_light") and combo_step < LIGHT_COMBO_MAX:
+			if _attack_phase in [AttackPhase.LIGHT_ACTIVE, AttackPhase.LIGHT_RECOVERY]:
+				_light_buffered = true
+		if Input.is_action_just_pressed("attack_heavy") and _attack_phase == AttackPhase.LIGHT_RECOVERY:
+			_start_heavy_attack()
+		return
+	if state == State.ATTACK_HEAVY:
 		return
 	if skills.has("rune_s_ironwall") and Input.is_action_pressed("defend"):
 		if (not side_view or is_on_floor()) and state != State.DEFEND:
@@ -321,7 +394,14 @@ func _light_damage_mult() -> float:
 		m += 0.10
 		if combo_step >= 2:
 			m += 0.05
+		if combo_step >= 3:
+			m += 0.08
 	return m
+
+
+func _combo_profile(step: int) -> Dictionary:
+	var idx := clampi(step - 1, 0, LIGHT_COMBO.size() - 1)
+	return LIGHT_COMBO[idx]
 
 
 func _heavy_damage_mult() -> float:
@@ -382,7 +462,15 @@ func _apply_pose_texture() -> void:
 		State.ROLL:
 			tex = _tex_dodge
 		State.ATTACK_LIGHT:
-			tex = _tex_light
+			match combo_step:
+				1:
+					tex = _tex_light1 if _tex_light1 else _tex_light
+				2:
+					tex = _tex_light2 if _tex_light2 else _tex_light
+				3:
+					tex = _tex_light3 if _tex_light3 else _tex_light
+				_:
+					tex = _tex_light
 		State.ATTACK_HEAVY:
 			tex = _tex_heavy
 		_:
@@ -393,7 +481,11 @@ func _apply_pose_texture() -> void:
 
 func _apply_blade_visual() -> void:
 	blade_sprite.rotation_degrees = BLADE_ART_OFFSET_DEG + blade_swing_deg
-	blade_sprite.visible = state in [State.ATTACK_LIGHT, State.ATTACK_HEAVY, State.IDLE, State.MOVE, State.JUMP, State.DEFEND]
+	## 三段各有全身刀姿贴图时隐藏独立刀片，避免叠影；杀招仍用刀片
+	if state == State.ATTACK_LIGHT and combo_step >= 1:
+		blade_sprite.visible = false
+	else:
+		blade_sprite.visible = state in [State.ATTACK_HEAVY, State.IDLE, State.MOVE, State.JUMP, State.DEFEND]
 
 
 func _start_roll() -> void:
@@ -421,24 +513,35 @@ func _start_light_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 		_lock_facing_from_input_or_mouse()
 	attack_locked_facing = facing
 	state = State.ATTACK_LIGHT
-	combo_step = mini(combo_step + 1, 2)
+	_light_buffered = false
+	## 连段窗内递增，否则从第一段重开
+	if combo_window > 0.0 and combo_step > 0 and combo_step < LIGHT_COMBO_MAX:
+		combo_step += 1
+	else:
+		combo_step = 1
+	combo_window = 0.0
+	_combo_def = _combo_profile(combo_step)
 	_attack_spd = 1.0
 	_attack_reach = float(_brand_stats().get("reach", 1.0))
-	var windup := LIGHT_WINDUP / _attack_spd
-	if combo_step == 2:
-		windup *= 0.75
-		if skills.has("rune_s_chain"):
-			windup *= 0.9
+	var windup: float = float(_combo_def["windup"]) / _attack_spd
+	if combo_step == 2 and skills.has("rune_s_chain"):
+		windup *= 0.9
 	if not is_on_floor():
 		_air_attacks += 1
 		if _air_attacks >= 2:
 			windup += 0.04
-	_set_hitbox_size(Vector2(36, 24) * _attack_reach, Vector2(26, -2) * _attack_reach)
-	blade_swing_deg = -55.0
+	var hit_size: Vector2 = _combo_def["hit_size"] * _attack_reach
+	var hit_off: Vector2 = _combo_def["hit_offset"] * _attack_reach
+	_set_hitbox_size(hit_size, hit_off)
+	blade_swing_deg = float(_combo_def["swing_from"])
 	_apply_blade_visual()
+	var lunge: float = float(_combo_def.get("lunge", 0.0))
+	if side_view:
+		velocity.x = facing.x * lunge
 	_attack_phase = AttackPhase.LIGHT_WINDUP
 	_attack_timer = windup
-	_face_punish_left = FACE_PUNISH_WINDOW
+	_face_punish_left = FACE_PUNISH_WINDOW * (1.0 + 0.15 * float(combo_step - 1))
+	_apply_pose_texture()
 
 
 func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
@@ -450,6 +553,7 @@ func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	state = State.ATTACK_HEAVY
 	combo_step = 0
 	combo_window = 0.0
+	_light_buffered = false
 	_attack_spd = 1.0
 	_attack_reach = float(_brand_stats().get("reach", 1.0))
 	_attack_kb = HEAVY_KNOCKBACK * float(_brand_stats().get("heavy_kb", 1.0))
@@ -466,6 +570,7 @@ func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	if not is_on_floor():
 		_air_attacks += 1
 	loud_skill_used.emit("heavy")
+	_apply_pose_texture()
 
 
 func _lock_facing_from_input_or_mouse() -> void:
@@ -488,24 +593,35 @@ func _tick_attack(delta: float) -> void:
 		return
 	match _attack_phase:
 		AttackPhase.LIGHT_WINDUP:
-			hitbox.enable(_roll_attack_damage(LIGHT_DAMAGE * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), LIGHT_KNOCKBACK, self)
-			blade_swing_deg = 45.0
+			if _combo_def.is_empty():
+				_combo_def = _combo_profile(combo_step)
+			var dmg: float = float(_combo_def["damage"]) * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)
+			var kb: float = float(_combo_def["knockback"])
+			hitbox.enable(_roll_attack_damage(dmg), kb, self)
+			blade_swing_deg = float(_combo_def["swing_to"])
 			_apply_blade_visual()
 			_attack_phase = AttackPhase.LIGHT_ACTIVE
-			_attack_timer = LIGHT_ACTIVE / _attack_spd
+			_attack_timer = float(_combo_def["active"]) / _attack_spd
 			AudioManager.sfx_blade()
 		AttackPhase.LIGHT_ACTIVE:
 			hitbox.disable()
-			var recovery := LIGHT_RECOVERY / _attack_spd
-			if combo_step == 2:
-				recovery *= 0.85
+			var recovery: float = float(_combo_def.get("recovery", LIGHT_RECOVERY)) / _attack_spd
 			if _air_attacks >= 2:
 				recovery += AIR_GREED_EXTRA_RECOVERY
 			_attack_phase = AttackPhase.LIGHT_RECOVERY
 			_attack_timer = recovery
 		AttackPhase.LIGHT_RECOVERY:
-			_finish_attack_to_idle()
-			combo_window = 0.28
+			## 缓冲连段：硬直结束立刻接下一段
+			if _light_buffered and combo_step < LIGHT_COMBO_MAX:
+				_light_buffered = false
+				combo_window = 0.35
+				_start_light_attack(attack_locked_facing)
+			else:
+				_finish_attack_to_idle()
+				## 第三段后连段窗较短；前两段留窗便于点按衔接
+				combo_window = 0.18 if combo_step >= LIGHT_COMBO_MAX else 0.32
+				if combo_step >= LIGHT_COMBO_MAX:
+					combo_step = 0
 		AttackPhase.HEAVY_WINDUP:
 			hitbox.enable(_roll_attack_damage(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), _attack_kb, self)
 			blade_swing_deg = 60.0
@@ -529,11 +645,13 @@ func _tick_attack(delta: float) -> void:
 
 func _finish_attack_to_idle() -> void:
 	blade_swing_deg = 0.0
+	_light_buffered = false
 	_apply_blade_visual()
 	_attack_phase = AttackPhase.NONE
 	_attack_timer = 0.0
 	if state == State.ATTACK_LIGHT or state == State.ATTACK_HEAVY:
 		state = State.IDLE if is_on_floor() else State.JUMP
+	_apply_pose_texture()
 
 
 func _set_hitbox_size(size: Vector2, offset: Vector2) -> void:
@@ -555,13 +673,38 @@ func _roll_attack_damage(base: float) -> float:
 	return dmg
 
 
-func _on_hitbox_hit(_hurtbox: Area2D) -> void:
-	call_deferred("_deferred_hit_fx")
+func _on_hitbox_hit(hurtbox: Area2D) -> void:
+	call_deferred("_deferred_hit_fx", hurtbox)
 	call_deferred("_apply_pending_lifesteal")
 
 
-func _deferred_hit_fx() -> void:
-	HitstopUtil.freeze(get_tree(), 0.055)
+func _deferred_hit_fx(hurtbox: Area2D = null) -> void:
+	## 砍中：更长顿帧 + 震屏 + 火花 + 命中音（挥空只在 windup 出刀音）
+	var stop := 0.08
+	if combo_step >= 3 or state == State.ATTACK_HEAVY:
+		stop = 0.12
+	elif combo_step == 2:
+		stop = 0.095
+	HitstopUtil.freeze(get_tree(), stop)
+	_camera_shake = maxf(_camera_shake, stop + 0.04)
+	AudioManager.sfx_hurt_enemy()
+	## 命中时短暂停刀前冲，像砍进肉里
+	velocity.x *= 0.25
+	var spark_pos := global_position + Vector2(facing.x * 22.0, -10.0)
+	if hurtbox != null and is_instance_valid(hurtbox):
+		spark_pos = hurtbox.global_position + Vector2(0, -8)
+	_spawn_hit_spark(spark_pos)
+
+
+func _spawn_hit_spark(pos: Vector2) -> void:
+	var spark := Node2D.new()
+	spark.set_script(load("res://scripts/combat/hit_spark.gd"))
+	var parent_n := get_parent()
+	if parent_n == null:
+		parent_n = self
+	parent_n.add_child(spark)
+	if spark.has_method("setup"):
+		spark.setup(pos, facing.x)
 
 
 func _apply_pending_lifesteal() -> void:

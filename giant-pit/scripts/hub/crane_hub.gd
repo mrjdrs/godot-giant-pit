@@ -237,10 +237,9 @@ func _spawn_player() -> void:
 
 func _refresh_status() -> void:
 	var day_txt := Loc.t("hud.game_day", [MetaProgress.game_day])
-	var pit_txt := Loc.t("hud.pit_done_today") if MetaProgress.entered_pit_today else Loc.t("hud.pit_ready_today")
 	hud.get_node("StatusLabel").text = "%s | %s | %s | %s | %s | %s" % [
 		day_txt,
-		pit_txt,
+		Loc.t("hud.pit_open"),
 		Loc.t("hud.mind", [MetaProgress.mind_level]),
 		Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]),
 		Loc.t("hud.gold", [MetaProgress.gold]),
@@ -455,8 +454,7 @@ func _open_pit() -> void:
 	var lines: PackedStringArray = []
 	lines.append(Loc.t("hub.enter_pit"))
 	lines.append(Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]))
-	if not MetaProgress.can_enter_pit_today():
-		lines.append(Loc.t("hub.pit_blocked"))
+	lines.append(Loc.t("hub.enter_pit_free"))
 	if MetaProgress.unlocked_warps.is_empty():
 		lines.append(Loc.t("hub.warp_locked_none"))
 	else:
@@ -466,7 +464,7 @@ func _open_pit() -> void:
 	panel_body.text = "\n".join(lines)
 	btn_a.text = Loc.t("hub.enter")
 	btn_a.visible = true
-	btn_a.disabled = not MetaProgress.can_enter_pit_today()
+	btn_a.disabled = false
 	var can_warp := not MetaProgress.unlocked_warps.is_empty() and MetaProgress.can_afford_mind(MetaProgress.WARP_COST_ENTER)
 	btn_b.text = Loc.t("hub.enter_warp", [MetaProgress.WARP_COST_ENTER])
 	btn_b.visible = not MetaProgress.unlocked_warps.is_empty()
@@ -772,18 +770,11 @@ func _upgrade_any() -> void:
 
 
 func _enter_pit(spawn_id: String = "") -> void:
-	if not MetaProgress.can_enter_pit_today():
-		_toast(Loc.t("hub.pit_blocked"))
-		return
-	MetaProgress.mark_entered_pit()
 	RunSession.begin_run(spawn_id)
 	get_tree().change_scene_to_file("res://scenes/pit/side_pit_floor.tscn")
 
 
 func _enter_pit_via_warp() -> void:
-	if not MetaProgress.can_enter_pit_today():
-		_toast(Loc.t("hub.pit_blocked"))
-		return
 	if MetaProgress.unlocked_warps.is_empty():
 		_toast(Loc.t("hub.warp_locked_none"))
 		return

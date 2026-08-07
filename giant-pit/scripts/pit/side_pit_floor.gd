@@ -28,6 +28,7 @@ const GROUND_Y := 160.0
 @onready var settle_body: Label = $HUD/SettlePanel/Body
 @onready var btn_keep: Button = $HUD/SettlePanel/BtnKeep
 @onready var btn_hub: Button = $HUD/SettlePanel/BtnHub
+@onready var btn_extract: Button = $HUD/BtnExtract
 
 var graph: Dictionary = {}
 var nodes_by_id: Dictionary = {}
@@ -56,6 +57,9 @@ func _ready() -> void:
 	player.loud_skill_used.connect(func(k): biome_rules.on_loud_skill(player, k))
 	btn_hub.pressed.connect(_return_hub)
 	btn_keep.pressed.connect(_on_keep_pressed)
+	if btn_extract:
+		btn_extract.pressed.connect(request_extract)
+		btn_extract.text = Loc.t("hud.btn_extract")
 	settle_panel.visible = false
 	banner_label.visible = false
 	if map_title:
@@ -131,11 +135,12 @@ func _enter_node(node_id: String, teleport: bool = false) -> void:
 	biome_rules.set_biome(str(node["biome"]))
 	_show_biome_banner(str(node["biome"]))
 	_spawn_node_content(node)
+	## 每段左侧常驻撤离口（绳梯回营）
+	_spawn_interactable(ST.NODE_EXTRACT, Vector2(48, GROUND_Y - 24), {"always_exit": true})
 	if teleport:
 		player.global_position = Vector2(80, GROUND_Y - 40)
 		player.velocity = Vector2.ZERO
 	_refresh_map_ui()
-	## 自动揭示后尝试前进按钮：靠近右门
 	_spawn_exits(node)
 
 
@@ -318,11 +323,16 @@ func _spawn_interactable(itype: String, pos: Vector2, extra: Dictionary) -> void
 	area.add_child(spr)
 	var lbl := Label.new()
 	lbl.name = "Label"
-	lbl.position = Vector2(-20, -40)
+	lbl.position = Vector2(-28, -52)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 12)
+	if itype == ST.NODE_EXTRACT:
+		lbl.text = Loc.t("hud.extract_marker")
+		lbl.modulate = Color(0.55, 1.0, 0.75, 1.0)
 	area.add_child(lbl)
 	var cs := CollisionShape2D.new()
 	var shape := RectangleShape2D.new()
-	shape.size = Vector2(28, 40)
+	shape.size = Vector2(36, 48)
 	cs.shape = shape
 	cs.position = Vector2(0, -8)
 	area.add_child(cs)
@@ -334,13 +344,15 @@ func _spawn_exits(node: Dictionary) -> void:
 	var outs: Array = []
 	for e in graph["edges"]:
 		if e["from"] == node["id"]:
-			outs.append(e["to"])
+			outs.append({"id": e["to"], "forward": true})
 		elif e["to"] == node["id"]:
-			outs.append(e["from"])
+			outs.append({"id": e["from"], "forward": false})
 	var seen := {}
-	var i := 0
+	var forward_i := 0
+	var back_i := 0
 	var DoorScript = load("res://scripts/pit/side_door.gd")
-	for oid in outs:
+	for item in outs:
+		var oid: String = str(item["id"])
 		if seen.has(oid):
 			continue
 		seen[oid] = true
@@ -348,21 +360,38 @@ func _spawn_exits(node: Dictionary) -> void:
 		door.set_script(DoorScript)
 		var spr := Sprite2D.new()
 		spr.name = "Sprite"
-		spr.modulate = Color(0.9, 0.85, 0.5)
+		spr.modulate = Color(0.55, 0.95, 0.7) if bool(item.get("forward", true)) else Color(0.75, 0.75, 0.85)
 		if ResourceLoader.exists("res://assets/props/side/warp.png"):
 			spr.texture = load("res://assets/props/side/warp.png")
 		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		door.add_child(spr)
+		var tip := Label.new()
+		tip.position = Vector2(-24, -56)
+		tip.add_theme_font_size_override("font_size", 11)
+		var dest_node: Dictionary = nodes_by_id.get(oid, {})
+		var dtype := str(dest_node.get("type", ""))
+		if dtype == ST.NODE_EXTRACT:
+			tip.text = Loc.t("hud.door_to_extract")
+			tip.modulate = Color(0.55, 1.0, 0.75)
+		elif bool(item.get("forward", true)):
+			tip.text = Loc.t("hud.door_forward")
+		else:
+			tip.text = Loc.t("hud.door_back")
+		door.add_child(tip)
 		var cs := CollisionShape2D.new()
 		var shape := RectangleShape2D.new()
-		shape.size = Vector2(24, 48)
+		shape.size = Vector2(28, 52)
 		cs.shape = shape
 		door.add_child(cs)
 		entities.add_child(door)
-		door.dest_id = str(oid)
+		door.dest_id = oid
 		door.floor_ref = self
-		door.global_position = Vector2(SEGMENT_WIDTH - 60 - i * 50, GROUND_Y - 28)
-		i += 1
+		if bool(item.get("forward", true)):
+			door.global_position = Vector2(SEGMENT_WIDTH - 56 - forward_i * 48, GROUND_Y - 28)
+			forward_i += 1
+		else:
+			door.global_position = Vector2(120 + back_i * 48, GROUND_Y - 28)
+			back_i += 1
 
 
 func request_travel(dest_id: String) -> void:
@@ -397,6 +426,9 @@ func request_warp_menu(warp_id: String) -> void:
 
 
 func request_extract() -> void:
+	if _settling:
+		return
+	## HUD / 绳梯均可触发撤离结算
 	_finish_success()
 
 
@@ -406,6 +438,8 @@ func _finish_success() -> void:
 	_settling = true
 	erosion.paused = true
 	player.input_locked = true
+	if btn_extract:
+		btn_extract.visible = false
 	var quest_r := MetaProgress.complete_quest_if_able({
 		"inventory_slots": player.inventory.slots,
 		"kill_scale": RunSession.kill_scale,
@@ -425,6 +459,8 @@ func _on_player_died() -> void:
 		return
 	_settling = true
 	erosion.paused = true
+	if btn_extract:
+		btn_extract.visible = false
 	MetaProgress.apply_death_wear()
 	settle_panel.visible = true
 	btn_keep.visible = true

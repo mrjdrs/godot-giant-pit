@@ -105,10 +105,29 @@ def draw_player_side(pose: str) -> Image.Image:
         fill_rect(img, 20, body_y + 14, 4, 8, SKIN2)
         fill_rect(img, 22, body_y + 8, 3, 14, METAL)
         fill_rect(img, 21, body_y + 6, 5, 3, METAL2)
-    elif pose == "light":
-        fill_rect(img, 18, body_y + 10, 10, 4, SKIN2)
-        fill_rect(img, 24, body_y + 4, 4, 16, METAL)
-        fill_rect(img, 23, body_y + 2, 6, 3, METAL2)
+    elif pose == "light" or pose == "light1":
+        # 一段：平斩前伸
+        fill_rect(img, 18, body_y + 12, 12, 4, SKIN2)
+        fill_rect(img, 26, body_y + 10, 5, 14, METAL)
+        fill_rect(img, 25, body_y + 8, 7, 3, METAL2)
+        fill_rect(img, 28, body_y + 22, 3, 3, GOLD)
+    elif pose == "light2":
+        # 二段：斜上斩，刀举高
+        fill_rect(img, 16, body_y + 6, 8, 5, SKIN2)
+        fill_rect(img, 22, body_y - 4, 4, 18, METAL)
+        fill_rect(img, 20, body_y - 6, 8, 3, METAL2)
+        fill_rect(img, 22, body_y + 12, 4, 3, GOLD)
+        # 前倾身
+        fill_rect(img, 20, body_y + 14, 3, 6, SKIN)
+    elif pose == "light3":
+        # 三段：下劈收势，刀压低前砸
+        fill_rect(img, 14, body_y + 16, 10, 5, SKIN2)
+        fill_rect(img, 22, body_y + 18, 8, 4, METAL)
+        fill_rect(img, 28, body_y + 16, 4, 8, METAL2)
+        fill_rect(img, 30, body_y + 22, 3, 4, GOLD)
+        # 下蹲重心
+        fill_rect(img, 10, body_y + 30, 5, 4, HAIR)
+        fill_rect(img, 17, body_y + 32, 5, 4, HAIR)
     elif pose == "heavy":
         fill_rect(img, 16, body_y + 6, 8, 5, SKIN2)
         fill_rect(img, 20, body_y - 2, 5, 18, METAL)
@@ -263,7 +282,7 @@ def draw_ui_icon(name: str) -> Image.Image:
 
 
 def main() -> None:
-    for pose in ("idle", "run", "jump", "light", "heavy", "dodge"):
+    for pose in ("idle", "run", "jump", "light", "light1", "light2", "light3", "heavy", "dodge"):
         save(draw_player_side(pose), f"characters/player/side/player_{pose}.png")
     save(draw_dummy_side(), "enemies/side/dummy_post.png")
     for biome in ("moss", "copper", "echo"):

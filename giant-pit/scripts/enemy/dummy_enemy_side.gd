@@ -38,12 +38,17 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var knock: float = float(hitbox.get("knockback_force"))
 	var src = hitbox.get("source")
 	hp = maxf(hp - dmg, 0.0)
-	flash_timer = 0.18
+	flash_timer = 0.22
 	_update_hp_label()
 	var dir := 1.0
 	if src is Node2D:
 		dir = signf(global_position.x - (src as Node2D).global_position.x)
-	knockback_velocity = Vector2(dir * knock, -30.0)
+		if dir == 0.0:
+			dir = 1.0
+	knockback_velocity = Vector2(dir * knock * 0.9, -50.0)
+	scale = Vector2(1.15, 0.85)
+	var tw := create_tween()
+	tw.tween_property(self, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	print(Loc.t("dummy.hit", [dmg, hp]))
 	if hp <= 0.0:
 		_reset_dummy()

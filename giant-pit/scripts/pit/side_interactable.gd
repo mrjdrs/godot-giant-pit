@@ -57,6 +57,8 @@ func can_interact(_player: Node) -> bool:
 
 
 func get_prompt() -> String:
+	if interact_type == ST.NODE_EXTRACT:
+		return Loc.t("hud.interact_extract")
 	if interact_type == ST.NODE_WARP:
 		if warp_id != "" and RunSession.is_warp_active(warp_id):
 			return Loc.t("hud.interact_warp")
