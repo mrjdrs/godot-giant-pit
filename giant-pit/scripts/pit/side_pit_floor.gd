@@ -5,9 +5,11 @@ const ST = preload("res://scripts/pit/segment_types.gd")
 const SideEnemyScene = preload("res://scenes/enemy/side_enemy.tscn")
 const InteractScript = preload("res://scripts/pit/side_interactable.gd")
 const BiomeRulesScript = preload("res://scripts/pit/biome_rules.gd")
+const AtmosphereScript = preload("res://scripts/fx/scene_atmosphere.gd")
 
 const SEGMENT_WIDTH := 640.0
 const GROUND_Y := 160.0
+const TILE_SIZE := 32.0
 
 @onready var world: Node2D = $World
 @onready var entities: Node2D = $World/Entities
@@ -16,6 +18,7 @@ const GROUND_Y := 160.0
 @onready var hud: CanvasLayer = $HUD
 @onready var hp_label: Label = $HUD/HpLabel
 @onready var erosion_bar: ProgressBar = $HUD/ErosionBar
+@onready var erosion_icon: TextureRect = $HUD/ErosionIcon
 @onready var biome_label: Label = $HUD/BiomeLabel
 @onready var brand_label: Label = $HUD/BrandLabel
 @onready var map_title: Label = $HUD/MapPanel/VBox/MapTitle
@@ -41,6 +44,7 @@ var _death_keep_index: int = 0
 var _mud_zones: Array = []
 var _fog_zones: Array = []
 var _map_chip_by_id: Dictionary = {}
+var _atmosphere: Node2D
 
 
 func _ready() -> void:
@@ -64,6 +68,11 @@ func _ready() -> void:
 	banner_label.visible = false
 	if map_title:
 		map_title.text = Loc.t("hud.map_title")
+	if erosion_icon and ResourceLoader.exists("res://assets/ui/side/erosion.png"):
+		erosion_icon.texture = load("res://assets/ui/side/erosion.png")
+		erosion_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+	_atmosphere = AtmosphereScript.install(world, self, ST.BIOME_MOSS)
 
 	## 吐息简化：封锁资源节点一类
 	var breath_block: bool = MetaProgress.is_breath_day()
@@ -132,6 +141,8 @@ func _enter_node(node_id: String, teleport: bool = false) -> void:
 
 	_clear_entities()
 	_build_segment_terrain(node)
+	if _atmosphere and _atmosphere.has_method("set_biome"):
+		_atmosphere.set_biome(str(node["biome"]))
 	biome_rules.set_biome(str(node["biome"]))
 	_show_biome_banner(str(node["biome"]))
 	_spawn_node_content(node)
@@ -155,42 +166,56 @@ func _clear_entities() -> void:
 
 func _build_segment_terrain(node: Dictionary) -> void:
 	var biome: String = str(node["biome"])
-	var ground_tex = load("res://assets/tiles/side/%s/ground.png" % biome)
-	var bg_tex = load("res://assets/tiles/side/%s/bg.png" % biome)
-	var bg := Sprite2D.new()
-	bg.texture = bg_tex
-	bg.centered = true
-	bg.position = Vector2(SEGMENT_WIDTH * 0.5, 40)
-	bg.scale = Vector2(22, 14)
-	bg.z_index = -2
-	bg.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	terrain.add_child(bg)
+	var ground_tex: Texture2D = load("res://assets/tiles/side/%s/ground.png" % biome)
+	var ground_b_tex: Texture2D = load("res://assets/tiles/side/%s/ground_b.png" % biome)
+	if not ResourceLoader.exists("res://assets/tiles/side/%s/ground_b.png" % biome):
+		ground_b_tex = ground_tex
+	var platform_tex: Texture2D = load("res://assets/tiles/side/%s/platform.png" % biome)
+	var wall_tex: Texture2D = load("res://assets/tiles/side/%s/wall.png" % biome)
 
-	_add_static_box(Vector2(SEGMENT_WIDTH * 0.5, GROUND_Y + 16), Vector2(SEGMENT_WIDTH + 40, 32), ground_tex)
-	_add_static_box(Vector2(-16, 40), Vector2(32, 280), null)
-	_add_static_box(Vector2(SEGMENT_WIDTH + 16, 40), Vector2(32, 280), null)
-	## 平台
-	_add_static_box(Vector2(220, 70), Vector2(120, 14), ground_tex)
-	_add_static_box(Vector2(420, 30), Vector2(100, 14), ground_tex)
+	_add_tiled_strip(Vector2(SEGMENT_WIDTH * 0.5, GROUND_Y + 16), Vector2(SEGMENT_WIDTH + 40, TILE_SIZE), ground_tex, ground_b_tex, true)
+	_add_tiled_wall(Vector2(-16, 40), Vector2(TILE_SIZE, 280), wall_tex)
+	_add_tiled_wall(Vector2(SEGMENT_WIDTH + 16, 40), Vector2(TILE_SIZE, 280), wall_tex)
+	_add_tiled_strip(Vector2(220, 70), Vector2(120, 14), platform_tex, null, true)
+	_add_tiled_strip(Vector2(420, 30), Vector2(100, 14), platform_tex, null, true)
 
 	if biome == ST.BIOME_MOSS:
 		_mud_zones.append(Rect2(160, GROUND_Y - 20, 140, 40))
-		var mud := ColorRect.new()
-		mud.color = Color(0.2, 0.35, 0.28, 0.55)
-		mud.position = Vector2(160, GROUND_Y - 10)
-		mud.size = Vector2(140, 20)
-		mud.z_index = -1
-		terrain.add_child(mud)
 		_fog_zones.append(Rect2(300, GROUND_Y - 100, 160, 90))
-		var fog := ColorRect.new()
-		fog.color = Color(0.7, 0.85, 0.8, 0.28)
-		fog.position = Vector2(300, GROUND_Y - 100)
-		fog.size = Vector2(160, 90)
-		fog.z_index = 5
-		terrain.add_child(fog)
+		_add_overlay_sprite("res://assets/tiles/side/moss/mud.png", Vector2(230, GROUND_Y - 2), Vector2(140, 20), 0.72, -1)
+		_add_overlay_sprite("res://assets/tiles/side/moss/fog.png", Vector2(380, GROUND_Y - 55), Vector2(160, 90), 0.55, 5)
 
 
-func _add_static_box(pos: Vector2, size: Vector2, tex) -> void:
+func _add_tiled_strip(pos: Vector2, size: Vector2, tex_a: Texture2D, tex_b: Texture2D, with_collision: bool) -> void:
+	var body := StaticBody2D.new()
+	body.position = pos
+	body.collision_layer = 1
+	if with_collision:
+		var cs := CollisionShape2D.new()
+		var shape := RectangleShape2D.new()
+		shape.size = size
+		cs.shape = shape
+		body.add_child(cs)
+	var holder := Node2D.new()
+	body.add_child(holder)
+	var cols := int(ceil(size.x / TILE_SIZE))
+	var rows := maxi(1, int(ceil(size.y / TILE_SIZE)))
+	var origin := Vector2(-size.x * 0.5, -size.y * 0.5)
+	for row in rows:
+		for col in cols:
+			var spr := Sprite2D.new()
+			var pick: Texture2D = tex_a
+			if tex_b != null and (col + row) % 3 == 0:
+				pick = tex_b
+			spr.texture = pick
+			spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			spr.centered = false
+			spr.position = origin + Vector2(col * TILE_SIZE, row * TILE_SIZE)
+			holder.add_child(spr)
+	terrain.add_child(body)
+
+
+func _add_tiled_wall(pos: Vector2, size: Vector2, tex: Texture2D) -> void:
 	var body := StaticBody2D.new()
 	body.position = pos
 	body.collision_layer = 1
@@ -199,13 +224,34 @@ func _add_static_box(pos: Vector2, size: Vector2, tex) -> void:
 	shape.size = size
 	cs.shape = shape
 	body.add_child(cs)
-	if tex != null:
-		var spr := Sprite2D.new()
-		spr.texture = tex
-		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		spr.scale = Vector2(size.x / 32.0, maxf(size.y / 32.0, 0.4))
-		body.add_child(spr)
+	var holder := Node2D.new()
+	body.add_child(holder)
+	var cols := maxi(1, int(ceil(size.x / TILE_SIZE)))
+	var rows := int(ceil(size.y / TILE_SIZE))
+	var origin := Vector2(-size.x * 0.5, -size.y * 0.5)
+	for row in rows:
+		for col in cols:
+			var spr := Sprite2D.new()
+			spr.texture = tex
+			spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			spr.centered = false
+			spr.position = origin + Vector2(col * TILE_SIZE, row * TILE_SIZE)
+			holder.add_child(spr)
 	terrain.add_child(body)
+
+
+func _add_overlay_sprite(path: String, center: Vector2, size: Vector2, alpha: float, z: int) -> void:
+	if not ResourceLoader.exists(path):
+		return
+	var spr := Sprite2D.new()
+	spr.texture = load(path)
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	spr.centered = true
+	spr.position = center
+	spr.scale = Vector2(size.x / TILE_SIZE, size.y / TILE_SIZE)
+	spr.modulate = Color(1, 1, 1, alpha)
+	spr.z_index = z
+	terrain.add_child(spr)
 
 
 func _spawn_node_content(node: Dictionary) -> void:

@@ -1,13 +1,49 @@
-# Art Manifest — MVP 卡通像素素材包（v0.4 UI + 三区域）
+# Art Manifest — 侧视坑内 + Hub 营地（现行）
 
-> 规格：图标/槽位 32×32；整面板 320×240；条带 128×8；透明底，Nearest 友好  
-> 风格：炼金奇幻 / 俯视卡通像素  
-> 地图：第 1 层三区域；UI：属性 / 背包 / 技能学习整面板  
-> 色板：土石褐 + 炼金青 `#3D8B7A` + 烙印金 `#E8A838`｜轮廓 `#2A1F18`
+> 规格：侧视角色 32×48；tile 32×32；视差背景 160×96；图标 32×32；整面板 320×240  
+> 风格：炼金奇幻 / **侧视卡通像素**（坑内）+ **俯视卡通像素**（Hub）  
+> 生成：`tools/gen_sideview_art.py`（侧视 + Hub 质感）｜`tools/gen_mvp_pixel_art.py`（legacy UI）  
+> 色板：土石褐 + 炼金青 `#3D8B7A` + 烙印金 `#E8A838`｜轮廓 `#2A1F18`  
+> 规范：见 `doc/new/07_美术质感规范.md`
 
 ---
 
-## Characters（现行）
+## Side-view Characters（坑内现行）
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `player_side_*` | 探坑者侧视 pose | `res://assets/characters/player/side/player_{idle,run,jump,light,light1,light2,light3,heavy,dodge}.png` |
+| `weapon_blade` | 大刀 | `res://assets/characters/player/weapon_blade.png` |
+
+## Side-view Enemies（坑内现行）
+
+| ID | 模式 | 路径 |
+|----|------|------|
+| `{moss,copper,echo}_{mob,elite,guard}` | 三区敌人 | `res://assets/enemies/side/` |
+| `floor_boss` | 层 BOSS | `res://assets/enemies/side/floor_boss.png` |
+| `dummy_post` | 木桩 | `res://assets/enemies/side/dummy_post.png` |
+
+## Side-view Tiles & Parallax（坑内现行）
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `{biome}/ground` | 地面 | `res://assets/tiles/side/{moss,copper,echo}/ground.png` |
+| `{biome}/platform` | 平台顶 | `res://assets/tiles/side/{biome}/platform.png` |
+| `{biome}/wall` | 侧墙 | `res://assets/tiles/side/{biome}/wall.png` |
+| `{biome}/bg_far` | 视差远层 | `res://assets/tiles/side/{biome}/bg_far.png` |
+| `{biome}/bg_mid` | 视差中层 | `res://assets/tiles/side/{biome}/bg_mid.png` |
+| `moss/mud`, `moss/fog` | 泥沼/雾 | `res://assets/tiles/side/moss/` |
+
+## Side-view Props & UI（坑内现行）
+
+| ID | 路径 |
+|----|------|
+| extract, warp, gather, shortcut, descent, winch, spotlight | `res://assets/props/side/` |
+| erosion, rule_*, map_* | `res://assets/ui/side/` |
+
+---
+
+## Characters（legacy 俯视 · 归档参考）
 
 | ID | 名称 | 路径 |
 |----|------|------|
@@ -36,11 +72,12 @@
 | `rune_a_sharpeye` | 锐眼 | 属性 | `res://assets/runes/rune_a_sharpeye.png` |
 | `rune_a_cruel` | 狠劲 | 属性 | `res://assets/runes/rune_a_cruel.png` |
 
-## Hub（现行）
+## Hub（现行 · 俯视营地）
 
 | ID | 名称 | 路径 |
 |----|------|------|
 | `hub_floor` | 石砖地 | `res://assets/tiles/hub/hub_floor.png` |
+| `hub_wall` | 营地墙 | `res://assets/tiles/hub/hub_wall.png` |
 | `hub_board` | 告示板 | `res://assets/tiles/hub/hub_board.png` |
 | `hub_alchemy` | 炼金台 | `res://assets/tiles/hub/hub_alchemy.png` |
 | `hub_quiet_door` | 静室门 | `res://assets/tiles/hub/hub_quiet_door.png` |
@@ -48,7 +85,7 @@
 
 ---
 
-## Enemies — 沉苔沼（区域 A）
+## Enemies — 沉苔沼（区域 A · 归档俯视）
 
 | ID | 名称 | 职司 | 路径 |
 |----|------|------|------|

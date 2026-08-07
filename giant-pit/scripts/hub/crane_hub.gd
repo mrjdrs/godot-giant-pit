@@ -3,6 +3,7 @@ extends Node2D
 
 const PlayerScene = preload("res://scenes/player/player.tscn")
 const FacilityScript = preload("res://scripts/hub/hub_facility.gd")
+const AtmosphereScript = preload("res://scripts/fx/scene_atmosphere.gd")
 const Equipment = preload("res://scripts/meta/equipment.gd")
 const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
@@ -26,6 +27,7 @@ var player: CharacterBody2D = null
 var sheet_host: CanvasLayer = null
 var _mode: String = ""
 var _selected_quest: String = ""
+var _atmosphere: Node2D
 
 const PANEL_BTN_LEFT := 20.0
 const PANEL_BTN_RIGHT := 540.0
@@ -160,6 +162,7 @@ func _process(_delta: float) -> void:
 
 
 func _build_hub() -> void:
+	_atmosphere = AtmosphereScript.install(world, self, "hub")
 	var floor_tex: Texture2D = load("res://assets/tiles/hub/hub_floor.png")
 	for y in 10:
 		for x in 14:
@@ -185,6 +188,10 @@ func _build_hub() -> void:
 	_add_facility("awaken", Vector2(0, 80), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("pit", Vector2(80, 80), "res://assets/tiles/hub/hub_pit_mouth.png")
 
+	if _atmosphere and _atmosphere.has_method("add_glow"):
+		_atmosphere.add_glow(Vector2(80, 80), Color(1.0, 0.85, 0.55, 1.0), 0.28, 100.0)
+		_atmosphere.add_glow(Vector2(120, 60), Color(0.9, 0.95, 1.0, 1.0), 0.18, 80.0)
+
 
 func _wall_box(center: Vector2, size: Vector2) -> void:
 	var body := StaticBody2D.new()
@@ -195,12 +202,28 @@ func _wall_box(center: Vector2, size: Vector2) -> void:
 	rect.size = size
 	shape.shape = rect
 	body.add_child(shape)
-	var vis := Polygon2D.new()
-	vis.color = Color(0.35, 0.32, 0.28, 1)
-	var hx := size.x * 0.5
-	var hy := size.y * 0.5
-	vis.polygon = PackedVector2Array([Vector2(-hx, -hy), Vector2(hx, -hy), Vector2(hx, hy), Vector2(-hx, hy)])
-	body.add_child(vis)
+	var wall_tex: Texture2D = load("res://assets/tiles/hub/hub_wall.png")
+	if wall_tex:
+		var holder := Node2D.new()
+		body.add_child(holder)
+		var cols := maxi(1, int(ceil(size.x / 32.0)))
+		var rows := maxi(1, int(ceil(size.y / 32.0)))
+		var origin := Vector2(-size.x * 0.5, -size.y * 0.5)
+		for row in rows:
+			for col in cols:
+				var spr := Sprite2D.new()
+				spr.texture = wall_tex
+				spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+				spr.centered = false
+				spr.position = origin + Vector2(col * 32, row * 32)
+				holder.add_child(spr)
+	else:
+		var vis := Polygon2D.new()
+		vis.color = Color(0.35, 0.32, 0.28, 1)
+		var hx := size.x * 0.5
+		var hy := size.y * 0.5
+		vis.polygon = PackedVector2Array([Vector2(-hx, -hy), Vector2(hx, -hy), Vector2(hx, hy), Vector2(-hx, hy)])
+		body.add_child(vis)
 	world.add_child(body)
 
 
