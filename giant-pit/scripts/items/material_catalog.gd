@@ -86,6 +86,18 @@ const MATERIALS := {
 		"stack": 99,
 		"tier": ItemTier.Tier.RARE,
 	},
+	"mat_whirl_edge": {
+		"name_key": "mat.whirl_edge",
+		"icon": "res://assets/materials/mat_ember_gland.png",
+		"stack": 99,
+		"tier": ItemTier.Tier.RARE,
+	},
+	"mat_iron_guard": {
+		"name_key": "mat.iron_guard",
+		"icon": "res://assets/materials/mat_chitin_plate.png",
+		"stack": 99,
+		"tier": ItemTier.Tier.RARE,
+	},
 }
 
 

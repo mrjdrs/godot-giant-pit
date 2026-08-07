@@ -1,0 +1,148 @@
+[gd_scene format=3 uid="uid://bsidepit01"]
+
+[ext_resource type="Script" path="res://scripts/pit/side_pit_floor.gd" id="1_floor"]
+[ext_resource type="PackedScene" path="res://scenes/player/player.tscn" id="2_player"]
+
+[node name="SidePitFloor" type="Node2D"]
+script = ExtResource("1_floor")
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Terrain" type="Node2D" parent="World"]
+
+[node name="Entities" type="Node2D" parent="World"]
+
+[node name="Player" parent="World" instance=ExtResource("2_player")]
+position = Vector2(80, 120)
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="HpLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 220.0
+offset_bottom = 36.0
+text = "HP"
+
+[node name="ErosionBar" type="ProgressBar" parent="HUD"]
+offset_left = 16.0
+offset_top = 40.0
+offset_right = 220.0
+offset_bottom = 60.0
+max_value = 100.0
+show_percentage = false
+
+[node name="ErosionLabel" type="Label" parent="HUD"]
+offset_left = 228.0
+offset_top = 40.0
+offset_right = 320.0
+offset_bottom = 60.0
+text = "侵蚀"
+
+[node name="BiomeLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 68.0
+offset_right = 520.0
+offset_bottom = 92.0
+text = "Biome"
+
+[node name="BrandLabel" type="Label" parent="HUD"]
+offset_left = 16.0
+offset_top = 92.0
+offset_right = 320.0
+offset_bottom = 116.0
+text = "Brand"
+
+[node name="MapPanel" type="PanelContainer" parent="HUD"]
+anchors_preset = 12
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = -96.0
+offset_right = 900.0
+offset_bottom = -12.0
+grow_vertical = 0
+
+[node name="VBox" type="VBoxContainer" parent="HUD/MapPanel"]
+theme_override_constants/separation = 4
+
+[node name="MapTitle" type="Label" parent="HUD/MapPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "地图"
+
+[node name="MapScroll" type="ScrollContainer" parent="HUD/MapPanel/VBox"]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 3
+vertical_scroll_mode = 3
+
+[node name="MapRow" type="HBoxContainer" parent="HUD/MapPanel/VBox/MapScroll"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="PromptLabel" type="Label" parent="HUD"]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -140.0
+offset_right = 200.0
+offset_bottom = -108.0
+grow_horizontal = 2
+grow_vertical = 0
+horizontal_alignment = 1
+
+[node name="BannerLabel" type="Label" parent="HUD"]
+offset_left = 360.0
+offset_top = 120.0
+offset_right = 920.0
+offset_bottom = 180.0
+theme_override_font_sizes/font_size = 28
+horizontal_alignment = 1
+text = "Banner"
+
+[node name="SettlePanel" type="Panel" parent="HUD"]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -140.0
+offset_right = 220.0
+offset_bottom = 140.0
+
+[node name="Title" type="Label" parent="HUD/SettlePanel"]
+offset_left = 20.0
+offset_top = 16.0
+offset_right = 400.0
+offset_bottom = 48.0
+theme_override_font_sizes/font_size = 22
+text = "Settle"
+
+[node name="Body" type="Label" parent="HUD/SettlePanel"]
+offset_left = 20.0
+offset_top = 56.0
+offset_right = 400.0
+offset_bottom = 160.0
+autowrap_mode = 3
+text = "..."
+
+[node name="BtnKeep" type="Button" parent="HUD/SettlePanel"]
+offset_left = 20.0
+offset_top = 180.0
+offset_right = 180.0
+offset_bottom = 220.0
+text = "保留此格"
+
+[node name="BtnHub" type="Button" parent="HUD/SettlePanel"]
+offset_left = 200.0
+offset_top = 180.0
+offset_right = 400.0
+offset_bottom = 220.0
+text = "返回营地"

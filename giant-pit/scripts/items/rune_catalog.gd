@@ -25,6 +25,7 @@ const DEFS := {
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"brand_tags": ["blade"],
+		"loud": true,
 	},
 	"rune_s_cloudstep": {
 		"kind": RuneKind.SKILL,

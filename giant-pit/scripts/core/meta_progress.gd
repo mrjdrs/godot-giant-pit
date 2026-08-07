@@ -22,6 +22,12 @@ var intel: PackedStringArray = []
 var unlocked_warps: Array = [] ## ["warp_a", ...]
 var game_day: int = 1
 var entered_pit_today: bool = false
+## 横版 doc/new 扩展
+var unlocked_shortcuts: Array = [] ## ["shortcut_moss_extract", ...]
+var winch_level: int = 0 ## 绞盘机 0–3
+var spotlight_level: int = 0 ## 探照灯 0–3
+var awakening_branch: String = "" ## "" | whirl | ironwall
+var breath_interval_days: int = 3
 
 const WARP_COST_ENTER := 15
 const WARP_COST_TRAVEL := 10
@@ -32,6 +38,10 @@ const VOUCHER_SPEND_VALUE := 99 ## 购买/兑回时 1 张金币券折合金币
 const GOLD_TO_PAPER_COST := 100
 const MIND_POTION_PRICE := 200
 const MIND_POTION_RESTORE := 30
+const WINCH_UPGRADE_COST := {"alchem_slag": 3, "beast_scale": 2}
+const SPOTLIGHT_UPGRADE_COST := {"glow_moss": 2, "mind_shard": 2}
+const AWAKEN_WHIRL_COST := {"mat_whirl_edge": 2, "glow_moss": 3}
+const AWAKEN_IRON_COST := {"mat_iron_guard": 2, "alchem_slag": 3}
 
 
 func mind_value_max() -> int:
@@ -64,6 +74,61 @@ func mark_entered_pit() -> void:
 
 func can_enter_pit_today() -> bool:
 	return not entered_pit_today
+
+
+func is_shortcut_unlocked(shortcut_id: String) -> bool:
+	return unlocked_shortcuts.has(shortcut_id)
+
+
+func unlock_shortcut(shortcut_id: String) -> void:
+	if shortcut_id == "" or unlocked_shortcuts.has(shortcut_id):
+		return
+	unlocked_shortcuts.append(shortcut_id)
+	changed.emit()
+	save_game()
+
+
+func is_breath_day() -> bool:
+	## 简化吐息：每 N 日触发（第 3、6、9… 日）
+	return game_day > 0 and game_day % breath_interval_days == 0
+
+
+func try_upgrade_winch() -> String:
+	if winch_level >= 3:
+		return "max"
+	if not consume_stash(WINCH_UPGRADE_COST):
+		return "no_mats"
+	winch_level += 1
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func try_upgrade_spotlight() -> String:
+	if spotlight_level >= 3:
+		return "max"
+	if not consume_stash(SPOTLIGHT_UPGRADE_COST):
+		return "no_mats"
+	spotlight_level += 1
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func try_awaken(branch: String) -> String:
+	if awakening_branch != "" and awakening_branch != branch:
+		return "locked_other"
+	if awakening_branch == branch:
+		return "owned"
+	var cost: Dictionary = AWAKEN_WHIRL_COST if branch == "whirl" else AWAKEN_IRON_COST
+	if branch != "whirl" and branch != "ironwall":
+		return "bad_branch"
+	if not consume_stash(cost):
+		return "no_mats"
+	awakening_branch = branch
+	changed.emit()
+	save_game()
+	return "ok"
 
 
 func restore_mind_value(amount: int) -> int:
@@ -411,14 +476,14 @@ func describe_stash() -> PackedStringArray:
 	var lines: PackedStringArray = []
 	for mid in stash.keys():
 		var sid := str(mid)
-		var name := sid
+		var disp_name := sid
 		if MaterialCatalog.MATERIALS.has(sid):
-			name = MaterialCatalog.display_name(sid)
+			disp_name = MaterialCatalog.display_name(sid)
 		elif RuneCatalog.DEFS.has(sid):
-			name = RuneCatalog.display_name(sid)
+			disp_name = RuneCatalog.display_name(sid)
 		elif ItemCatalog.ITEMS.has(sid):
-			name = ItemCatalog.display_name(sid)
-		lines.append("%s x%d" % [name, int(stash[mid])])
+			disp_name = ItemCatalog.display_name(sid)
+		lines.append("%s x%d" % [disp_name, int(stash[mid])])
 	return lines
 
 
@@ -435,6 +500,10 @@ func to_dict() -> Dictionary:
 		"unlocked_warps": unlocked_warps.duplicate(),
 		"game_day": game_day,
 		"entered_pit_today": entered_pit_today,
+		"unlocked_shortcuts": unlocked_shortcuts.duplicate(),
+		"winch_level": winch_level,
+		"spotlight_level": spotlight_level,
+		"awakening_branch": awakening_branch,
 	}
 
 
@@ -454,6 +523,12 @@ func from_dict(data: Dictionary) -> void:
 		unlocked_warps = []
 	game_day = int(data.get("game_day", 1))
 	entered_pit_today = bool(data.get("entered_pit_today", false))
+	unlocked_shortcuts = data.get("unlocked_shortcuts", [])
+	if typeof(unlocked_shortcuts) != TYPE_ARRAY:
+		unlocked_shortcuts = []
+	winch_level = int(data.get("winch_level", 0))
+	spotlight_level = int(data.get("spotlight_level", 0))
+	awakening_branch = str(data.get("awakening_branch", ""))
 	_ensure_equipment()
 
 

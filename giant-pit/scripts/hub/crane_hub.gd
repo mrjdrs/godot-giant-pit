@@ -180,6 +180,9 @@ func _build_hub() -> void:
 	_add_facility("inn", Vector2(160, 0), "res://assets/tiles/hub/hub_quiet_door.png")
 	_add_facility("exchange", Vector2(-120, 60), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("stash", Vector2(-60, 60), "res://assets/tiles/hub/hub_alchemy.png")
+	_add_facility("winch", Vector2(40, 40), "res://assets/props/side/winch.png")
+	_add_facility("spotlight", Vector2(120, 60), "res://assets/props/side/spotlight.png")
+	_add_facility("awaken", Vector2(0, 80), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("pit", Vector2(80, 80), "res://assets/tiles/hub/hub_pit_mouth.png")
 
 
@@ -224,6 +227,7 @@ func _spawn_player() -> void:
 	player = PlayerScene.instantiate()
 	entities.add_child(player)
 	player.global_position = Vector2(0, 40)
+	player.side_view = false
 	player.combat_enabled = false
 	player.apply_meta_brand("iron")
 	player.toast.connect(func(t): _toast(t))
@@ -272,6 +276,12 @@ func _on_facility(facility_id: String, _by: Node) -> void:
 			_open_alchemy()
 		"stash":
 			_open_stash()
+		"winch":
+			_open_winch()
+		"spotlight":
+			_open_spotlight()
+		"awaken":
+			_open_awaken()
 		"pit":
 			_open_pit()
 
@@ -470,8 +480,8 @@ func _format_cost(costs: Dictionary) -> String:
 	for mid in costs.keys():
 		var need := int(costs[mid])
 		var have := MetaProgress.stash_count(str(mid))
-		var name := MaterialCatalog.display_name(str(mid))
-		var piece := "%s x%d（有%d）" % [name, need, have]
+		var mat_name := MaterialCatalog.display_name(str(mid))
+		var piece := "%s x%d（有%d）" % [mat_name, need, have]
 		if have < need:
 			piece += Loc.t("hub.cost_lack")
 		parts.append(piece)
@@ -538,6 +548,50 @@ func _open_stash() -> void:
 	btn_a.disabled = false
 
 
+func _open_winch() -> void:
+	_mode = "winch"
+	_show_text_panel()
+	panel_title.text = Loc.t("hub.winch_title")
+	panel_body.text = Loc.t("hub.winch_body", [MetaProgress.winch_level, _format_cost(MetaProgress.WINCH_UPGRADE_COST)])
+	btn_a.text = Loc.t("hub.upgrade")
+	btn_a.visible = true
+	btn_b.visible = false
+	btn_c.visible = false
+	_layout_panel_buttons(true, false, false)
+
+
+func _open_spotlight() -> void:
+	_mode = "spotlight"
+	_show_text_panel()
+	panel_title.text = Loc.t("hub.spotlight_title")
+	var breath: String = Loc.t("hub.breath_active") if MetaProgress.is_breath_day() else Loc.t("hub.breath_idle")
+	panel_body.text = Loc.t("hub.spotlight_body", [MetaProgress.spotlight_level, _format_cost(MetaProgress.SPOTLIGHT_UPGRADE_COST), breath])
+	btn_a.text = Loc.t("hub.upgrade")
+	btn_a.visible = true
+	btn_b.visible = false
+	btn_c.visible = false
+	_layout_panel_buttons(true, false, false)
+
+
+func _open_awaken() -> void:
+	_mode = "awaken"
+	_show_text_panel()
+	panel_title.text = Loc.t("hub.awaken_title")
+	var cur: String = MetaProgress.awakening_branch
+	var cur_name: String = Loc.t("awaken.none") if cur == "" else Loc.t("awaken." + cur)
+	panel_body.text = Loc.t("hub.awaken_body", [
+		cur_name,
+		_format_cost(MetaProgress.AWAKEN_WHIRL_COST),
+		_format_cost(MetaProgress.AWAKEN_IRON_COST),
+	])
+	btn_a.text = Loc.t("awaken.whirl")
+	btn_b.text = Loc.t("awaken.ironwall")
+	btn_a.visible = true
+	btn_b.visible = true
+	btn_c.visible = false
+	_layout_panel_buttons(true, true, false)
+
+
 func _on_stash_hover(_index: int, tip: String) -> void:
 	if panel.has_node("Tooltip") and tip != "":
 		panel.get_node("Tooltip").text = tip
@@ -587,6 +641,8 @@ func _on_btn_a() -> void:
 		"inn":
 			MetaProgress.advance_day()
 			_toast(Loc.t("hub.inn_ok", [MetaProgress.game_day]))
+			if MetaProgress.is_breath_day():
+				_toast(Loc.t("hub.breath_active"))
 			_open_inn()
 		"exchange":
 			var ex := MetaProgress.exchange_gold_to_paper(1)
@@ -599,8 +655,44 @@ func _on_btn_a() -> void:
 			_sell_selected_stash()
 		"alchemy":
 			_craft(Equipment.SLOT_CHEST)
+		"winch":
+			var wr := MetaProgress.try_upgrade_winch()
+			match wr:
+				"ok":
+					_toast(Loc.t("hub.winch_ok", [MetaProgress.winch_level]))
+				"max":
+					_toast(Loc.t("hub.infra_max"))
+				_:
+					_toast(Loc.t("hub.no_mats"))
+			_open_winch()
+		"spotlight":
+			var sr := MetaProgress.try_upgrade_spotlight()
+			match sr:
+				"ok":
+					_toast(Loc.t("hub.spotlight_ok", [MetaProgress.spotlight_level]))
+				"max":
+					_toast(Loc.t("hub.infra_max"))
+				_:
+					_toast(Loc.t("hub.no_mats"))
+			_open_spotlight()
+		"awaken":
+			var ar := MetaProgress.try_awaken("whirl")
+			_toast_awaken(ar)
+			_open_awaken()
 		"pit":
 			_enter_pit("")
+
+
+func _toast_awaken(r: String) -> void:
+	match r:
+		"ok":
+			_toast(Loc.t("hub.awaken_ok", [Loc.t("awaken." + MetaProgress.awakening_branch)]))
+		"owned":
+			_toast(Loc.t("hub.awaken_owned"))
+		"locked_other":
+			_toast(Loc.t("hub.awaken_locked"))
+		_:
+			_toast(Loc.t("hub.no_mats"))
 
 
 func _on_btn_b() -> void:
@@ -616,6 +708,10 @@ func _on_btn_b() -> void:
 			else:
 				_toast(Loc.t("hub.no_paper"))
 			_open_exchange()
+		"awaken":
+			var ar := MetaProgress.try_awaken("ironwall")
+			_toast_awaken(ar)
+			_open_awaken()
 		"pit":
 			_enter_pit_via_warp()
 
@@ -681,7 +777,7 @@ func _enter_pit(spawn_id: String = "") -> void:
 		return
 	MetaProgress.mark_entered_pit()
 	RunSession.begin_run(spawn_id)
-	get_tree().change_scene_to_file("res://scenes/pit/pit_floor_01.tscn")
+	get_tree().change_scene_to_file("res://scenes/pit/side_pit_floor.tscn")
 
 
 func _enter_pit_via_warp() -> void:

@@ -1,4 +1,5 @@
 extends CharacterBody2D
+## 横版侧视探索者：走 / 跳 / 大刀普攻·杀招 / 闪避。
 
 const HitstopUtil = preload("res://scripts/combat/hitstop.gd")
 const InventoryScript = preload("res://scripts/player/inventory.gd")
@@ -12,13 +13,16 @@ signal loadout_changed
 signal inventory_changed
 signal stats_changed
 signal interact_prompt_changed(text: String)
+signal loud_skill_used(kind: String)
 
-enum State { IDLE, MOVE, ATTACK_LIGHT, ATTACK_HEAVY, ROLL, DEFEND }
+enum State { IDLE, MOVE, ATTACK_LIGHT, ATTACK_HEAVY, ROLL, DEFEND, JUMP }
 enum AttackPhase { NONE, LIGHT_WINDUP, LIGHT_ACTIVE, LIGHT_RECOVERY, HEAVY_WINDUP, HEAVY_ACTIVE, HEAVY_RECOVERY }
 
-const BASE_MOVE_SPEED := 140.0
+const BASE_MOVE_SPEED := 150.0
 const BASE_MAX_HP := 100.0
-const ROLL_SPEED := 280.0
+const GRAVITY := 980.0
+const JUMP_VELOCITY := -320.0
+const ROLL_SPEED := 320.0
 const ROLL_DURATION := 0.18
 const ROLL_COOLDOWN := 1.0
 const ROLL_IFRAMES := 0.16
@@ -37,6 +41,9 @@ const HEAVY_KNOCKBACK := 260.0
 const BLADE_ART_OFFSET_DEG := 90.0
 const DEFEND_DAMAGE_MULT := 0.5
 const DEFEND_MOVE_MULT := 0.45
+const AIR_GREED_EXTRA_RECOVERY := 0.12
+const AIR_GREED_DAMAGE_MULT := 1.25
+const FACE_PUNISH_WINDOW := 0.22
 
 @onready var sprite: Sprite2D = $Sprite
 @onready var blade_pivot: Node2D = $BladePivot
@@ -76,6 +83,24 @@ var _defending: bool = false
 var _last_prompt: String = ""
 var _pending_lifesteal: float = 0.0
 
+## 横版扩展
+var side_view: bool = true
+var move_speed_mult: float = 1.0
+var jump_mult: float = 1.0
+var in_mud: bool = false
+var in_fog: bool = false
+var metal_load: float = 0.0
+var _air_attacks: int = 0
+var _face_punish_left: float = 0.0
+var _was_on_floor: bool = true
+var awakening_branch: String = "" ## "" | whirl | ironwall
+var _tex_idle: Texture2D
+var _tex_run: Texture2D
+var _tex_jump: Texture2D
+var _tex_light: Texture2D
+var _tex_heavy: Texture2D
+var _tex_dodge: Texture2D
+
 
 func _ready() -> void:
 	collision_layer = 2
@@ -84,13 +109,29 @@ func _ready() -> void:
 	hitbox.configure_layers(8, 16)
 	hitbox.hit.connect(_on_hitbox_hit)
 	hitbox.disable()
-	_set_hitbox_size(Vector2(28, 18), Vector2(20, 0))
+	_set_hitbox_size(Vector2(28, 22), Vector2(22, -4))
+	_load_side_textures()
 	_apply_blade_visual()
 	inventory.changed.connect(func(): inventory_changed.emit())
 	skills.changed.connect(_on_skills_changed)
 	MetaProgress.changed.connect(_on_meta_changed)
+	awakening_branch = MetaProgress.awakening_branch
 	_refresh_character_stats(false)
+	_refresh_metal_load()
 	hp_changed.emit(hp, max_hp)
+
+
+func _load_side_textures() -> void:
+	_tex_idle = load("res://assets/characters/player/side/player_idle.png")
+	_tex_run = load("res://assets/characters/player/side/player_run.png")
+	_tex_jump = load("res://assets/characters/player/side/player_jump.png")
+	_tex_light = load("res://assets/characters/player/side/player_light.png")
+	_tex_heavy = load("res://assets/characters/player/side/player_heavy.png")
+	_tex_dodge = load("res://assets/characters/player/side/player_dodge.png")
+	if _tex_idle:
+		sprite.texture = _tex_idle
+		sprite.centered = true
+		sprite.offset = Vector2(0, -8)
 
 
 func _physics_process(delta: float) -> void:
@@ -106,11 +147,23 @@ func _physics_process(delta: float) -> void:
 		combo_window = maxf(combo_window - delta, 0.0)
 		if combo_window <= 0.0:
 			combo_step = 0
+	if _face_punish_left > 0.0:
+		_face_punish_left = maxf(_face_punish_left - delta, 0.0)
+
+	var on_floor := is_on_floor()
+	if side_view:
+		if on_floor and not _was_on_floor:
+			_air_attacks = 0
+		_was_on_floor = on_floor
+		if not on_floor and state != State.ROLL:
+			velocity.y += GRAVITY * delta
+	else:
+		_was_on_floor = true
 
 	_tick_attack(delta)
 
 	match state:
-		State.IDLE, State.MOVE:
+		State.IDLE, State.MOVE, State.JUMP:
 			_process_free_move(delta)
 		State.ROLL:
 			_process_roll(delta)
@@ -141,7 +194,7 @@ func _handle_combat_input() -> void:
 	if state == State.ATTACK_LIGHT or state == State.ATTACK_HEAVY:
 		return
 	if skills.has("rune_s_ironwall") and Input.is_action_pressed("defend"):
-		if state != State.DEFEND:
+		if (not side_view or is_on_floor()) and state != State.DEFEND:
 			state = State.DEFEND
 			_defending = true
 			hitbox.disable()
@@ -161,12 +214,33 @@ func _handle_combat_input() -> void:
 
 func _process_free_move(_delta: float) -> void:
 	if input_locked:
-		velocity = Vector2.ZERO
+		velocity = Vector2.ZERO if not side_view else Vector2(0, velocity.y)
+		if not side_view:
+			velocity = Vector2.ZERO
 		return
-	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	velocity = input_dir * _move_speed()
-	_update_facing_to_mouse()
-	state = State.MOVE if input_dir.length_squared() > 0.01 else State.IDLE
+	if not side_view:
+		var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		velocity = input_dir * _move_speed()
+		if input_dir.length_squared() > 0.01:
+			facing = input_dir.normalized()
+		state = State.MOVE if input_dir.length_squared() > 0.01 else State.IDLE
+		return
+	var axis := Input.get_axis("move_left", "move_right")
+	velocity.x = axis * _move_speed()
+	if absf(axis) > 0.01:
+		facing = Vector2.RIGHT if axis > 0.0 else Vector2.LEFT
+
+	if is_on_floor() and Input.is_action_just_pressed("jump"):
+		velocity.y = JUMP_VELOCITY * _jump_mult()
+		state = State.JUMP
+		return
+
+	if not is_on_floor():
+		state = State.JUMP
+	elif absf(axis) > 0.01:
+		state = State.MOVE
+	else:
+		state = State.IDLE
 
 
 func _process_defend(_delta: float) -> void:
@@ -174,9 +248,10 @@ func _process_defend(_delta: float) -> void:
 		_end_defend()
 		return
 	_defending = true
-	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	velocity = input_dir * _move_speed() * DEFEND_MOVE_MULT
-	_update_facing_to_mouse()
+	var axis := Input.get_axis("move_left", "move_right")
+	velocity.x = axis * _move_speed() * DEFEND_MOVE_MULT
+	if not is_on_floor():
+		_end_defend()
 
 
 func _end_defend() -> void:
@@ -186,29 +261,52 @@ func _end_defend() -> void:
 
 
 func _process_attack_move(_delta: float) -> void:
-	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	velocity = input_dir * _move_speed() * 0.35
+	var axis := Input.get_axis("move_left", "move_right")
+	velocity.x = axis * _move_speed() * 0.28
 	facing = attack_locked_facing
+	## 空中斩击后可微跳衔接
+	if is_on_floor() and Input.is_action_just_pressed("jump") and _attack_phase in [AttackPhase.LIGHT_RECOVERY, AttackPhase.HEAVY_RECOVERY]:
+		velocity.y = JUMP_VELOCITY * _jump_mult() * 0.85
+		_finish_attack_to_idle()
 
 
 func _process_roll(delta: float) -> void:
 	roll_timer -= delta
-	velocity = facing * ROLL_SPEED
+	if side_view:
+		velocity.x = facing.x * ROLL_SPEED
+		velocity.y = minf(velocity.y, 0.0)
+	else:
+		velocity = facing * ROLL_SPEED
 	if roll_timer <= ROLL_DURATION - ROLL_IFRAMES:
 		invincible = false
 	if roll_timer <= 0.0:
 		invincible = false
 		roll_cd_left = ROLL_COOLDOWN * _roll_cd_mult()
 		state = State.IDLE
-		velocity = Vector2.ZERO
+		velocity = Vector2.ZERO if not side_view else Vector2(0, velocity.y)
 
 
 func _move_speed() -> float:
-	return BASE_MOVE_SPEED
+	var s := BASE_MOVE_SPEED * move_speed_mult
+	if in_mud:
+		s *= 0.55
+	return s
+
+
+func _jump_mult() -> float:
+	var m := jump_mult
+	## 磁累：金属件越多跳跃越差
+	m *= clampf(1.0 - metal_load * 0.12, 0.45, 1.0)
+	## 绞盘基建：略减负重对跳的惩罚
+	m *= 1.0 + 0.04 * MetaProgress.winch_level
+	return m
 
 
 func _damage_mult() -> float:
-	return 1.0
+	var m := 1.0
+	if awakening_branch == "whirl":
+		m *= 1.05
+	return m
 
 
 func _roll_cd_mult() -> float:
@@ -218,7 +316,7 @@ func _roll_cd_mult() -> float:
 
 
 func _light_damage_mult() -> float:
-	var m := 1.0
+	var m := 1.0 * _damage_mult()
 	if skills.has("rune_s_chain"):
 		m += 0.10
 		if combo_step >= 2:
@@ -227,9 +325,12 @@ func _light_damage_mult() -> float:
 
 
 func _heavy_damage_mult() -> float:
+	var m := _damage_mult()
 	if skills.has("rune_s_quake"):
-		return 1.15
-	return 1.0
+		m *= 1.15
+	if awakening_branch == "whirl":
+		m *= 1.1
+	return m
 
 
 func _brand_stats() -> Dictionary:
@@ -240,35 +341,70 @@ func _brand_stats() -> Dictionary:
 func apply_meta_brand(p_brand: String = "iron") -> void:
 	brand_quality = p_brand
 	equip_bonus = MetaProgress.total_equipment_bonuses()
+	awakening_branch = MetaProgress.awakening_branch
 	_refresh_character_stats(false)
+	_refresh_metal_load()
+
+
+func _refresh_metal_load() -> void:
+	metal_load = 0.0
+	## 胸甲/挂坠视为金属件；背包金属材料也计入（简化）
+	if MetaProgress.equipment.get("chest", {}).get("owned", false):
+		metal_load += 1.0 + float(MetaProgress.equipment.get("chest", {}).get("level", 1)) * 0.25
+	if MetaProgress.equipment.get("amulet", {}).get("owned", false):
+		metal_load += 0.5
+	for slot in inventory.slots:
+		var sid := str(slot.get("id", ""))
+		if sid in ["alchem_slag", "beast_scale", "ore_copper", "ore_iron"]:
+			metal_load += 0.15 * float(slot.get("count", 1))
 
 
 func carry_cap() -> float:
-	return stats.carry_cap
-
-
-func _update_facing_to_mouse() -> void:
-	var mouse := get_global_mouse_position()
-	var dir := mouse - global_position
-	if dir.length_squared() > 4.0:
-		facing = dir.normalized()
+	var cap: float = float(stats.carry_cap)
+	cap += 4.0 * float(MetaProgress.winch_level)
+	return cap
 
 
 func _update_visuals() -> void:
 	blade_pivot.rotation = facing.angle()
 	sprite.flip_h = facing.x < 0.0
 	_apply_blade_visual()
+	_apply_pose_texture()
+
+
+func _apply_pose_texture() -> void:
+	var tex: Texture2D = _tex_idle
+	match state:
+		State.MOVE:
+			tex = _tex_run
+		State.JUMP:
+			tex = _tex_jump
+		State.ROLL:
+			tex = _tex_dodge
+		State.ATTACK_LIGHT:
+			tex = _tex_light
+		State.ATTACK_HEAVY:
+			tex = _tex_heavy
+		_:
+			tex = _tex_idle
+	if tex and sprite.texture != tex:
+		sprite.texture = tex
 
 
 func _apply_blade_visual() -> void:
 	blade_sprite.rotation_degrees = BLADE_ART_OFFSET_DEG + blade_swing_deg
+	blade_sprite.visible = state in [State.ATTACK_LIGHT, State.ATTACK_HEAVY, State.IDLE, State.MOVE, State.JUMP, State.DEFEND]
 
 
 func _start_roll() -> void:
-	_update_facing_to_mouse()
-	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	if input_dir.length_squared() > 0.01:
-		facing = input_dir.normalized()
+	if side_view:
+		var axis := Input.get_axis("move_left", "move_right")
+		if absf(axis) > 0.01:
+			facing = Vector2.RIGHT if axis > 0.0 else Vector2.LEFT
+	else:
+		var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		if input_dir.length_squared() > 0.01:
+			facing = input_dir.normalized()
 	_attack_phase = AttackPhase.NONE
 	_attack_timer = 0.0
 	state = State.ROLL
@@ -280,9 +416,9 @@ func _start_roll() -> void:
 
 func _start_light_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	if lock_facing != Vector2.ZERO:
-		facing = lock_facing.normalized()
+		facing = Vector2.RIGHT if lock_facing.x >= 0.0 else Vector2.LEFT
 	else:
-		_update_facing_to_mouse()
+		_lock_facing_from_input_or_mouse()
 	attack_locked_facing = facing
 	state = State.ATTACK_LIGHT
 	combo_step = mini(combo_step + 1, 2)
@@ -293,18 +429,23 @@ func _start_light_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 		windup *= 0.75
 		if skills.has("rune_s_chain"):
 			windup *= 0.9
-	_set_hitbox_size(Vector2(36, 20) * _attack_reach, Vector2(26, 0) * _attack_reach)
+	if not is_on_floor():
+		_air_attacks += 1
+		if _air_attacks >= 2:
+			windup += 0.04
+	_set_hitbox_size(Vector2(36, 24) * _attack_reach, Vector2(26, -2) * _attack_reach)
 	blade_swing_deg = -55.0
 	_apply_blade_visual()
 	_attack_phase = AttackPhase.LIGHT_WINDUP
 	_attack_timer = windup
+	_face_punish_left = FACE_PUNISH_WINDOW
 
 
 func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	if lock_facing != Vector2.ZERO:
-		facing = lock_facing.normalized()
+		facing = Vector2.RIGHT if lock_facing.x >= 0.0 else Vector2.LEFT
 	else:
-		_update_facing_to_mouse()
+		_lock_facing_from_input_or_mouse()
 	attack_locked_facing = facing
 	state = State.ATTACK_HEAVY
 	combo_step = 0
@@ -312,11 +453,31 @@ func _start_heavy_attack(lock_facing: Vector2 = Vector2.ZERO) -> void:
 	_attack_spd = 1.0
 	_attack_reach = float(_brand_stats().get("reach", 1.0))
 	_attack_kb = HEAVY_KNOCKBACK * float(_brand_stats().get("heavy_kb", 1.0))
-	_set_hitbox_size(Vector2(48, 28) * _attack_reach, Vector2(30, 0) * _attack_reach)
+	var reach_box := Vector2(48, 30)
+	if awakening_branch == "whirl":
+		reach_box = Vector2(56, 36)
+		_attack_reach *= 1.15
+	_set_hitbox_size(reach_box * _attack_reach, Vector2(30, -4) * _attack_reach)
 	blade_swing_deg = -75.0
 	_apply_blade_visual()
 	_attack_phase = AttackPhase.HEAVY_WINDUP
 	_attack_timer = HEAVY_WINDUP / _attack_spd
+	_face_punish_left = FACE_PUNISH_WINDOW * 1.4
+	if not is_on_floor():
+		_air_attacks += 1
+	loud_skill_used.emit("heavy")
+
+
+func _lock_facing_from_input_or_mouse() -> void:
+	var axis := Input.get_axis("move_left", "move_right")
+	if absf(axis) > 0.01:
+		facing = Vector2.RIGHT if axis > 0.0 else Vector2.LEFT
+		return
+	var mouse := get_global_mouse_position()
+	if mouse.x < global_position.x - 4.0:
+		facing = Vector2.LEFT
+	elif mouse.x > global_position.x + 4.0:
+		facing = Vector2.RIGHT
 
 
 func _tick_attack(delta: float) -> void:
@@ -332,20 +493,19 @@ func _tick_attack(delta: float) -> void:
 			_apply_blade_visual()
 			_attack_phase = AttackPhase.LIGHT_ACTIVE
 			_attack_timer = LIGHT_ACTIVE / _attack_spd
+			AudioManager.sfx_blade()
 		AttackPhase.LIGHT_ACTIVE:
 			hitbox.disable()
 			var recovery := LIGHT_RECOVERY / _attack_spd
 			if combo_step == 2:
 				recovery *= 0.85
+			if _air_attacks >= 2:
+				recovery += AIR_GREED_EXTRA_RECOVERY
 			_attack_phase = AttackPhase.LIGHT_RECOVERY
 			_attack_timer = recovery
 		AttackPhase.LIGHT_RECOVERY:
-			blade_swing_deg = 0.0
-			_apply_blade_visual()
-			_attack_phase = AttackPhase.NONE
-			if state == State.ATTACK_LIGHT:
-				combo_window = 0.28
-				state = State.IDLE
+			_finish_attack_to_idle()
+			combo_window = 0.28
 		AttackPhase.HEAVY_WINDUP:
 			hitbox.enable(_roll_attack_damage(HEAVY_DAMAGE * _heavy_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)), _attack_kb, self)
 			blade_swing_deg = 60.0
@@ -353,18 +513,27 @@ func _tick_attack(delta: float) -> void:
 			_apply_blade_visual()
 			_attack_phase = AttackPhase.HEAVY_ACTIVE
 			_attack_timer = HEAVY_ACTIVE / _attack_spd
+			AudioManager.sfx_blade()
 		AttackPhase.HEAVY_ACTIVE:
 			hitbox.disable()
+			var recovery := HEAVY_RECOVERY / _attack_spd
+			if _air_attacks >= 2:
+				recovery += AIR_GREED_EXTRA_RECOVERY
 			_attack_phase = AttackPhase.HEAVY_RECOVERY
-			_attack_timer = HEAVY_RECOVERY / _attack_spd
+			_attack_timer = recovery
 		AttackPhase.HEAVY_RECOVERY:
-			blade_swing_deg = 0.0
-			_apply_blade_visual()
-			_attack_phase = AttackPhase.NONE
-			if state == State.ATTACK_HEAVY:
-				state = State.IDLE
+			_finish_attack_to_idle()
 		_:
 			_attack_phase = AttackPhase.NONE
+
+
+func _finish_attack_to_idle() -> void:
+	blade_swing_deg = 0.0
+	_apply_blade_visual()
+	_attack_phase = AttackPhase.NONE
+	_attack_timer = 0.0
+	if state == State.ATTACK_LIGHT or state == State.ATTACK_HEAVY:
+		state = State.IDLE if is_on_floor() else State.JUMP
 
 
 func _set_hitbox_size(size: Vector2, offset: Vector2) -> void:
@@ -393,7 +562,6 @@ func _on_hitbox_hit(_hurtbox: Area2D) -> void:
 
 func _deferred_hit_fx() -> void:
 	HitstopUtil.freeze(get_tree(), 0.055)
-	AudioManager.sfx_blade()
 
 
 func _apply_pending_lifesteal() -> void:
@@ -411,13 +579,20 @@ func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	var incoming := amount
 	if _defending and skills.has("rune_s_ironwall"):
 		incoming *= DEFEND_DAMAGE_MULT
+		if awakening_branch == "ironwall":
+			incoming *= 0.7
+	## 贴脸受击惩罚窗：攻击前摇中挨打伤害更高
+	if _face_punish_left > 0.0 and _attack_phase in [AttackPhase.LIGHT_WINDUP, AttackPhase.HEAVY_WINDUP]:
+		incoming *= AIR_GREED_DAMAGE_MULT
+	if _air_attacks >= 2 and not is_on_floor():
+		incoming *= 1.1
 	var mitigated: float = maxf(incoming - stats.pdef, 1.0)
 	hp = maxf(hp - mitigated, 0.0)
 	_hurt_flash = 0.2
 	hp_changed.emit(hp, max_hp)
 	AudioManager.sfx_hurt_player()
 	if from_pos != Vector2.ZERO:
-		var push := (global_position - from_pos).normalized() * 120.0
+		var push := Vector2(signf(global_position.x - from_pos.x) * 140.0, -40.0)
 		velocity += push
 	if hp <= 0.0:
 		_die()
@@ -436,6 +611,7 @@ func _die() -> void:
 func try_add_material(mat_id: String, count: int = 1) -> bool:
 	var r := inventory.add_material(mat_id, count, carry_cap())
 	if r == "ok":
+		_refresh_metal_load()
 		return true
 	if r == "full":
 		show_toast(Loc.t("bag.full"), 2)
@@ -467,7 +643,9 @@ func _on_skills_changed() -> void:
 
 func _on_meta_changed() -> void:
 	equip_bonus = MetaProgress.total_equipment_bonuses()
+	awakening_branch = MetaProgress.awakening_branch
 	_refresh_character_stats(true)
+	_refresh_metal_load()
 
 
 func _refresh_character_stats(keep_ratio: bool) -> void:
