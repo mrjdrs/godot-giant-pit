@@ -2,6 +2,7 @@ extends RefCounted
 ## 角色属性简表：基础 + 装备 + 已学属性符文 + 烙印。
 
 const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 
 signal changed
@@ -56,7 +57,11 @@ func recompute() -> void:
 	for rune_id in _learned.keys():
 		if not bool(_learned[rune_id]):
 			continue
-		var bonuses: Dictionary = RuneCatalog.stat_bonuses(str(rune_id))
+		var bonuses: Dictionary = {}
+		if CrystalCatalog.has_id(str(rune_id)):
+			bonuses = CrystalCatalog.stat_bonuses(str(rune_id))
+		else:
+			bonuses = RuneCatalog.stat_bonuses(str(rune_id))
 		vitality += float(bonuses.get("vitality", 0.0))
 		strength += float(bonuses.get("strength", 0.0))
 		bonus_hp += float(bonuses.get("max_hp", 0.0))
@@ -67,6 +72,13 @@ func recompute() -> void:
 		if bonuses.has("critdmg"):
 			critdmg += float(bonuses.get("critdmg", 0.0))
 			critdmg_enabled = true
+
+	var lv := 1
+	if Engine.get_main_loop() != null:
+		lv = int(MetaProgress.explorer_level)
+	vitality += 0.5 * float(lv - 1)
+	strength += 0.5 * float(lv - 1)
+	bonus_hp += 4.0 * float(lv - 1)
 
 	var brand: Dictionary = MindTable.BRAND_STATS.get(_brand, MindTable.BRAND_STATS["iron"])
 	var brand_dmg := float(brand.get("dmg", 1.0))

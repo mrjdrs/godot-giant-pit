@@ -26,13 +26,15 @@ func apply_to_player(player: Node, in_mud: bool, in_fog: bool) -> void:
 	player.in_fog = false
 	player.move_speed_mult = 1.0
 	player.jump_mult = 1.0
+	player.skill_cd_mult = 1.0
 	match current_biome:
 		ST.BIOME_MOSS:
 			player.in_mud = in_mud
 			player.in_fog = in_fog
 		ST.BIOME_COPPER:
-			## 磁累由 player.metal_load + jump_mult 处理
-			player.jump_mult = 1.0
+			var load_v: float = float(player.get("metal_load"))
+			player.move_speed_mult = clampf(1.0 - load_v * 0.08, 0.55, 1.0)
+			player.skill_cd_mult = 1.0 + load_v * 0.10
 		ST.BIOME_ECHO:
 			pass
 

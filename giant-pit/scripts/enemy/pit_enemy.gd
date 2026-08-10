@@ -2,6 +2,8 @@ extends CharacterBody2D
 ## 分区杂兵 / 精英 / 看守 / BOSS。
 
 const PickupScene = preload("res://scenes/items/pickup.tscn")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+const ProjectileScene = preload("res://scenes/combat/enemy_projectile.tscn")
 
 signal died_with_id(enemy_id: String, meta: Dictionary)
 
@@ -135,13 +137,34 @@ func _physics_process(delta: float) -> void:
 		var dist := to_player.length()
 		if dist < aggro_range and dist > 12.0:
 			wish = to_player.normalized() * move_speed
-		if dist < 18.0 and attack_cd <= 0.0:
+		if _is_ranged() and dist < aggro_range and dist > 70.0 and attack_cd <= 0.0:
+			_try_shoot_player(to_player)
+			attack_cd = attack_cooldown * 1.4
+		elif dist < 18.0 and attack_cd <= 0.0:
 			_try_hit_player()
 			attack_cd = attack_cooldown
 
 	velocity = wish + knockback_velocity
 	knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, 900.0 * delta)
 	move_and_slide()
+
+
+func _is_ranged() -> bool:
+	return enemy_id in ["a_spore", "b_slag", "c_wisp"]
+
+
+func _try_shoot_player(to_player: Vector2) -> void:
+	if _player == null:
+		return
+	var dir := to_player.normalized()
+	var proj := ProjectileScene.instantiate()
+	var parent := get_parent()
+	if parent == null:
+		return
+	parent.add_child(proj)
+	proj.global_position = global_position + dir * 14.0
+	if proj.has_method("setup"):
+		proj.setup(dir * 220.0, contact_damage, 0.0, 2.4)
 
 
 func _try_hit_player() -> void:
@@ -209,26 +232,18 @@ func _spawn_drops() -> void:
 	var parent := get_parent()
 	if parent == null:
 		return
+	var xp := CrystalCatalog.xp_for_kill(enemy_id, is_boss)
+	if _player != null:
+		var gained := MetaProgress.grant_xp(xp)
+		if _player.has_method("show_toast"):
+			_player.show_toast(Loc.t("toast.xp", [xp]), 0)
+			if gained > 0:
+				_player.show_toast(Loc.t("toast.levelup", [MetaProgress.explorer_level]), 0)
 	var mat := PickupScene.instantiate()
 	parent.add_child(mat)
-	mat.global_position = global_position + Vector2(randf_range(-20, 20), randf_range(-20, 20))
+	mat.global_position = global_position + Vector2(randf_range(-14, 14), randf_range(-10, 10))
 	mat.setup(0, drop_mat_id, 1) ## MATERIAL
-	if randf() < drop_rune_chance:
-		var RuneCatalog = load("res://scripts/items/rune_catalog.gd")
-		var pool: Array = RuneCatalog.DROP_POOL if _uses_full_rune_pool() else RuneCatalog.DROP_POOL_LOW
-		var rid: String = str(pool[randi() % pool.size()])
-		var rune := PickupScene.instantiate()
-		parent.add_child(rune)
-		rune.global_position = global_position + Vector2(randf_range(-28, 28), randf_range(-28, 28))
-		rune.setup(1, rid, 1) ## RUNE
-
-
-func _uses_full_rune_pool() -> bool:
-	if is_boss or quest_scale:
-		return true
-	if enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
-		return true
-	return false
+	## 击杀不掉技能 / 晶核，只掉材料与经验。
 
 
 func _update_hp_label() -> void:

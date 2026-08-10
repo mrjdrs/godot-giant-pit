@@ -16,7 +16,11 @@ var mind_value: int = 0 ## 可消耗念力值（传送 / 学符文）
 var gold: int = 0
 var stash: Dictionary = {} ## id -> count（材料 / 未学符文 / 特殊道具）
 var equipment: Dictionary = {}
-var learned_runes: Dictionary = {} ## rune_id -> true
+var learned_runes: Dictionary = {} ## 旧存档兼容；新进度用 learned_skills
+var learned_skills: Dictionary = {} ## core_id -> rank(int)
+var skill_loadout: Dictionary = {"rmb": "", "q": "", "e": "", "r": "", "f": "", "c": ""}
+var explorer_xp: int = 0
+var explorer_level: int = 1
 var active_quest_id: String = ""
 var intel: PackedStringArray = []
 var unlocked_warps: Array = [] ## ["warp_a", ...]
@@ -49,13 +53,176 @@ func mind_value_max() -> int:
 
 
 func has_learned(rune_id: String) -> bool:
-	return bool(learned_runes.get(rune_id, false))
+	return has_learned_skill(rune_id) or bool(learned_runes.get(rune_id, false))
+
+
+func has_learned_skill(core_id: String) -> bool:
+	return int(learned_skills.get(core_id, 0)) > 0 or bool(learned_runes.get(core_id, false))
+
+
+func skill_rank(core_id: String) -> int:
+	if int(learned_skills.get(core_id, 0)) > 0:
+		return int(learned_skills[core_id])
+	if bool(learned_runes.get(core_id, false)):
+		return 1
+	return 0
 
 
 func mark_learned(rune_id: String) -> void:
 	learned_runes[rune_id] = true
+	if not learned_skills.has(rune_id):
+		learned_skills[rune_id] = 1
 	changed.emit()
 	save_game()
+
+
+func xp_to_next_level(level: int = -1) -> int:
+	var lv := explorer_level if level < 0 else level
+	return 40 + lv * 25
+
+
+func grant_xp(amount: int) -> int:
+	if amount <= 0:
+		return 0
+	explorer_xp += amount
+	var gained := 0
+	while explorer_level < 30 and explorer_xp >= xp_to_next_level():
+		explorer_xp -= xp_to_next_level()
+		explorer_level += 1
+		gained += 1
+	changed.emit()
+	save_game()
+	return gained
+
+
+func skill_in_slot(slot: String) -> String:
+	return str(skill_loadout.get(slot, ""))
+
+
+func assign_skill_slot(slot: String, core_id: String) -> String:
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	if not slot in CrystalCatalog.HOTKEY_SLOTS:
+		return "bad_slot"
+	if core_id != "" and not has_learned_skill(core_id):
+		return "unlearned"
+	if core_id != "" and not CrystalCatalog.is_active(core_id):
+		return "passive"
+	for other in CrystalCatalog.HOTKEY_SLOTS:
+		if other != slot and str(skill_loadout.get(other, "")) == core_id and core_id != "":
+			skill_loadout[other] = ""
+	skill_loadout[slot] = core_id
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func cycle_skill_slot(slot: String) -> String:
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	if not slot in CrystalCatalog.HOTKEY_SLOTS:
+		return "bad_slot"
+	var actives: Array = []
+	for cid in learned_skills.keys():
+		if int(learned_skills[cid]) > 0 and CrystalCatalog.is_active(str(cid)):
+			actives.append(str(cid))
+	actives.sort()
+	if actives.is_empty():
+		skill_loadout[slot] = ""
+		changed.emit()
+		save_game()
+		return "ok"
+	var cur := str(skill_loadout.get(slot, ""))
+	var idx := actives.find(cur)
+	var next_id := ""
+	if idx < 0:
+		next_id = str(actives[0])
+	elif idx >= actives.size() - 1:
+		next_id = ""
+	else:
+		next_id = str(actives[idx + 1])
+	return assign_skill_slot(slot, next_id)
+
+
+func try_comprehend(core_id: String, inventory = null, from_stash: bool = false) -> String:
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	if not CrystalCatalog.has_id(core_id):
+		return "unknown"
+	if mind_level < CrystalCatalog.mind_level_req(core_id):
+		return "mind_level"
+	var already := skill_rank(core_id)
+	var cost := CrystalCatalog.learn_cost(core_id)
+	if already > 0:
+		cost += already * 10
+	if not can_afford_mind(cost):
+		return "no_mind"
+	if from_stash:
+		if stash_count(core_id) < 1:
+			return "no_rune"
+		if not consume_stash({core_id: 1}):
+			return "no_rune"
+	else:
+		if inventory == null or not inventory.has_method("consume_core"):
+			return "no_rune"
+		if not inventory.consume_core(core_id):
+			return "no_rune"
+	if not consume_mind_value(cost):
+		if from_stash:
+			add_stash(core_id, 1)
+		elif inventory != null and inventory.has_method("add_core"):
+			inventory.add_core(core_id, 1)
+		return "no_mind"
+	learned_skills[core_id] = already + 1
+	learned_runes[core_id] = true
+	if CrystalCatalog.is_active(core_id) and already == 0:
+		for slot in CrystalCatalog.HOTKEY_SLOTS:
+			if str(skill_loadout.get(slot, "")) == "":
+				skill_loadout[slot] = core_id
+				break
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func learned_stat_dict() -> Dictionary:
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	var out: Dictionary = {}
+	for cid in learned_skills.keys():
+		if int(learned_skills[cid]) <= 0:
+			continue
+		out[str(cid)] = true
+	for rid in learned_runes.keys():
+		if bool(learned_runes[rid]):
+			out[str(rid)] = true
+			## 旧符文 ID 映射到晶核属性
+			match str(rid):
+				"rune_a_toughbone":
+					out["core_a_toughbone"] = true
+				"rune_a_heavyarm":
+					out["core_a_heavyarm"] = true
+				"rune_a_sharpeye":
+					out["core_a_sharpeye"] = true
+				"rune_a_cruel":
+					out["core_a_cruel"] = true
+				"rune_s_chain":
+					out["core_s_chain"] = true
+				"rune_s_quake":
+					out["core_s_quake"] = true
+	for cid in out.keys():
+		if not CrystalCatalog.has_id(str(cid)) and not str(cid).begins_with("rune_"):
+			pass
+	return out
+
+
+func grant_arena_skills() -> void:
+	## 战斗场临时解锁，不写盘
+	if not has_learned_skill("core_s_quake"):
+		learned_skills["core_s_quake"] = 1
+	if not has_learned_skill("core_s_bolt"):
+		learned_skills["core_s_bolt"] = 1
+	if str(skill_loadout.get("rmb", "")) == "":
+		skill_loadout["rmb"] = "core_s_quake"
+	if str(skill_loadout.get("q", "")) == "":
+		skill_loadout["q"] = "core_s_bolt"
+	changed.emit()
 
 
 func advance_day() -> void:
@@ -263,15 +430,16 @@ func consume_stash(costs: Dictionary) -> bool:
 func merge_inventory_into_stash(slots: Array) -> void:
 	for entry in slots:
 		var t := str(entry.get("type", ""))
-		if t != "mat" and t != "rune" and t != "item":
+		if t != "mat" and t != "rune" and t != "item" and t != "core":
 			continue
 		add_stash(str(entry.get("id")), int(entry.get("count", 1)))
 
 
 func stash_as_entries(filter_kind: String = "") -> Array:
-	## filter_kind: "" | "mat" | "rune" | "item" | "rune_skill" | "rune_attr"
+	## filter_kind: "" | "mat" | "rune" | "item" | "core" | "core_skill" | "core_attr" | "rune_skill" | "rune_attr"
 	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
 	const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 	var out: Array = []
 	var keys: Array = stash.keys()
 	keys.sort()
@@ -281,7 +449,9 @@ func stash_as_entries(filter_kind: String = "") -> Array:
 		if count <= 0:
 			continue
 		var entry_type := "mat"
-		if RuneCatalog.DEFS.has(sid):
+		if CrystalCatalog.has_id(sid):
+			entry_type = "core"
+		elif RuneCatalog.DEFS.has(sid):
 			entry_type = "rune"
 		elif ItemCatalog.ITEMS.has(sid):
 			entry_type = "item"
@@ -289,11 +459,23 @@ func stash_as_entries(filter_kind: String = "") -> Array:
 			continue
 		if filter_kind == "item" and entry_type != "item":
 			continue
-		if filter_kind == "rune" and entry_type != "rune":
+		if filter_kind == "rune" and entry_type != "rune" and entry_type != "core":
 			continue
-		if filter_kind == "rune_skill" and (entry_type != "rune" or not RuneCatalog.is_skill(sid)):
+		if filter_kind == "core" and entry_type != "core":
 			continue
-		if filter_kind == "rune_attr" and (entry_type != "rune" or not RuneCatalog.is_attr(sid)):
+		if filter_kind == "core_skill" and (entry_type != "core" or not CrystalCatalog.is_skill(sid)):
+			continue
+		if filter_kind == "core_attr" and (entry_type != "core" or not CrystalCatalog.is_attr(sid)):
+			continue
+		if filter_kind == "rune_skill" and not (
+			(entry_type == "core" and CrystalCatalog.is_skill(sid))
+			or (entry_type == "rune" and RuneCatalog.is_skill(sid))
+		):
+			continue
+		if filter_kind == "rune_attr" and not (
+			(entry_type == "core" and CrystalCatalog.is_attr(sid))
+			or (entry_type == "rune" and RuneCatalog.is_attr(sid))
+		):
 			continue
 		out.append({"type": entry_type, "id": sid, "count": count, "rank": 1})
 	return out
@@ -472,12 +654,15 @@ func add_intel(text: String) -> void:
 func describe_stash() -> PackedStringArray:
 	const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
 	const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 	var lines: PackedStringArray = []
 	for mid in stash.keys():
 		var sid := str(mid)
 		var disp_name := sid
 		if MaterialCatalog.MATERIALS.has(sid):
 			disp_name = MaterialCatalog.display_name(sid)
+		elif CrystalCatalog.has_id(sid):
+			disp_name = CrystalCatalog.display_name(sid)
 		elif RuneCatalog.DEFS.has(sid):
 			disp_name = RuneCatalog.display_name(sid)
 		elif ItemCatalog.ITEMS.has(sid):
@@ -494,6 +679,10 @@ func to_dict() -> Dictionary:
 		"stash": stash,
 		"equipment": equipment,
 		"learned_runes": learned_runes,
+		"learned_skills": learned_skills,
+		"skill_loadout": skill_loadout,
+		"explorer_xp": explorer_xp,
+		"explorer_level": explorer_level,
 		"active_quest_id": active_quest_id,
 		"intel": Array(intel),
 		"unlocked_warps": unlocked_warps.duplicate(),
@@ -515,6 +704,17 @@ func from_dict(data: Dictionary) -> void:
 	learned_runes = data.get("learned_runes", {})
 	if typeof(learned_runes) != TYPE_DICTIONARY:
 		learned_runes = {}
+	learned_skills = data.get("learned_skills", {})
+	if typeof(learned_skills) != TYPE_DICTIONARY:
+		learned_skills = {}
+	skill_loadout = data.get("skill_loadout", {"rmb": "", "q": "", "e": "", "r": "", "f": "", "c": ""})
+	if typeof(skill_loadout) != TYPE_DICTIONARY:
+		skill_loadout = {"rmb": "", "q": "", "e": "", "r": "", "f": "", "c": ""}
+	for k in ["rmb", "q", "e", "r", "f", "c"]:
+		if not skill_loadout.has(k):
+			skill_loadout[k] = ""
+	explorer_xp = int(data.get("explorer_xp", 0))
+	explorer_level = maxi(1, int(data.get("explorer_level", 1)))
 	active_quest_id = str(data.get("active_quest_id", ""))
 	intel = PackedStringArray(data.get("intel", []))
 	unlocked_warps = data.get("unlocked_warps", [])
@@ -549,7 +749,7 @@ func load_game() -> void:
 				"alchem_slag": 4,
 				"beast_scale": 3,
 				"glow_moss": 2,
-				"rune_s_chain": 1,
+				"core_s_chain": 1,
 				"item_bag_expand": 1,
 			}
 			mind_value = mind_value_max()

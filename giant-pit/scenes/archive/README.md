@@ -1,9 +1,19 @@
-# Archive — top-down (v0.4)
+# Archive
 
-Scenes here are **not** on the main path. Current game uses:
+Scenes here are **not** on the main path.
+
+## Current main path (doc v2.0 · 俯视 ARPG)
 
 - Hub: `res://scenes/hub/crane_hub.tscn`
-- Pit: `res://scenes/pit/side_pit_floor.tscn`
-- Blade feel: `res://scenes/prototype/combat_arena_side.tscn`
+- Pit: `res://scenes/pit/pit_floor_01.tscn`
+- Blade feel: `res://scenes/prototype/combat_arena.tscn`
 
-`pit_floor_01_topdown.tscn` is a copy of the old open-map + fog floor for reference only.
+## Side-view (doc v1.0 · 归档)
+
+- `res://scenes/pit/side_pit_floor.tscn`
+- `res://scenes/prototype/combat_arena_side.tscn`
+- `res://scenes/enemy/side_enemy.tscn`
+
+Do not wire these into Hub 入坑.
+
+`pit_floor_01_topdown.tscn` is an extra copy of the open-map + fog floor.

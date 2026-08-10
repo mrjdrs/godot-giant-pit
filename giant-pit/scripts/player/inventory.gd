@@ -3,6 +3,7 @@ extends RefCounted
 const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
 const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 
 signal changed
 
@@ -11,7 +12,7 @@ const EXPAND_PER_USE := 2
 const DEFAULT_MAT_WEIGHT := 1.0
 const GOLD_WEIGHT_PER := 0.01
 
-## Each entry: { "type": "mat"|"rune"|"item", "id": String, "count": int, "rank": int }
+## Each entry: { "type": "mat"|"rune"|"item"|"core", "id": String, "count": int, "rank": int }
 var slots: Array = []
 var extra_slots: int = 0
 
@@ -41,6 +42,8 @@ func entry_weight(entry: Dictionary) -> float:
 	match t:
 		"rune":
 			return RuneCatalog.weight(id) * float(count)
+		"core":
+			return CrystalCatalog.weight(id) * float(count)
 		"item":
 			return ItemCatalog.weight(id) * float(count)
 		_:
@@ -85,6 +88,41 @@ func add_material(mat_id: String, count: int = 1, carry_cap: float = 9999.0) -> 
 	slots.append({"type": "mat", "id": mat_id, "count": count, "rank": 1})
 	changed.emit()
 	return "ok"
+
+
+func add_core(core_id: String, count: int = 1, carry_cap: float = 9999.0) -> String:
+	if count <= 0:
+		return "ok"
+	var add_w := CrystalCatalog.weight(core_id) * float(count)
+	for entry in slots:
+		if entry.get("type") == "core" and entry.get("id") == core_id:
+			if not can_add_weight(add_w, carry_cap):
+				return "overweight"
+			entry["count"] = int(entry["count"]) + count
+			changed.emit()
+			return "ok"
+	if is_full():
+		return "full"
+	if not can_add_weight(add_w, carry_cap):
+		return "overweight"
+	slots.append({"type": "core", "id": core_id, "count": count, "rank": 1})
+	changed.emit()
+	return "ok"
+
+
+func find_core_index(core_id: String) -> int:
+	for i in slots.size():
+		var e: Dictionary = slots[i]
+		if e.get("type") == "core" and str(e.get("id")) == core_id:
+			return i
+	return -1
+
+
+func consume_core(core_id: String) -> bool:
+	var idx := find_core_index(core_id)
+	if idx < 0:
+		return false
+	return remove_at(idx, 1)
 
 
 func add_rune_as_item(rune_id: String, rank: int = 1, carry_cap: float = 9999.0) -> String:
@@ -197,6 +235,8 @@ func describe_contents() -> PackedStringArray:
 				lines.append("%s x%d" % [MaterialCatalog.display_name(str(entry.get("id"))), int(entry.get("count", 1))])
 			"rune":
 				lines.append("%s" % RuneCatalog.display_name(str(entry.get("id"))))
+			"core":
+				lines.append("%s x%d" % [CrystalCatalog.display_name(str(entry.get("id"))), int(entry.get("count", 1))])
 			"item":
 				lines.append("%s x%d" % [ItemCatalog.display_name(str(entry.get("id"))), int(entry.get("count", 1))])
 	return lines
@@ -211,6 +251,8 @@ func describe_slot(index: int) -> String:
 			return "%s x%d" % [MaterialCatalog.display_name(str(entry.get("id"))), int(entry.get("count", 1))]
 		"rune":
 			return RuneCatalog.display_name(str(entry.get("id")))
+		"core":
+			return "%s x%d" % [CrystalCatalog.display_name(str(entry.get("id"))), int(entry.get("count", 1))]
 		"item":
 			return "%s x%d" % [ItemCatalog.display_name(str(entry.get("id"))), int(entry.get("count", 1))]
 	return str(entry.get("id"))

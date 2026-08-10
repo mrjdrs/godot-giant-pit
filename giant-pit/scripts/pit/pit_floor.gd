@@ -6,6 +6,11 @@ const RegionCatalog = preload("res://scripts/pit/region_catalog.gd")
 const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
+const BiomeRulesScript = preload("res://scripts/pit/biome_rules.gd")
+const AtmosphereScript = preload("res://scripts/fx/scene_atmosphere.gd")
+const SkillBarScript = preload("res://scripts/ui/skill_bar.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+const ST = preload("res://scripts/pit/segment_types.gd")
 
 const PlayerScene = preload("res://scenes/player/player.tscn")
 const EnemyScene = preload("res://scenes/enemy/pit_enemy.tscn")
@@ -41,6 +46,10 @@ var _quest_open: bool = false
 var _warp_menu_from: String = ""
 var _minimap_dirty: bool = false
 var _last_minimap_tile: Vector2i = Vector2i(-99999, -99999)
+var erosion = ErosionSystem.new()
+var biome_rules: BiomeRules
+var _atmosphere: Node2D
+var _skill_bar: Control
 
 
 func _ready() -> void:
@@ -56,6 +65,11 @@ func _ready() -> void:
 	if hud.has_node("RegionBanner"):
 		hud.get_node("RegionBanner").modulate.a = 0.0
 	_ensure_sheet_host()
+	biome_rules = BiomeRulesScript.new()
+	add_child(biome_rules)
+	biome_rules.reinforcement_requested.connect(_on_reinforcement)
+	erosion.value_changed.connect(_on_erosion_value)
+	erosion.tier_changed.connect(_on_erosion_tier)
 	AudioManager.play_bgm()
 	call_deferred("_deferred_boot")
 
@@ -84,9 +98,13 @@ func _deferred_boot() -> void:
 	extract_ui.get_node("Panel/ArenaButton").visible = false
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if player == null or _run_over:
 		return
+	erosion.tick(delta)
+	_apply_biome_runtime()
+	if erosion.has_method("apply_dot"):
+		erosion.apply_dot(player, delta)
 	_update_exploration()
 
 
@@ -150,7 +168,7 @@ func _build_terrain() -> void:
 	rooms_root.add_child(decor)
 
 	var tile: int = int(_map.get("tile", 32))
-	## 按区域大块铺地（性能）
+	## 按区域矩形平铺地砖（repeat，不拉伸），只盖本区 bounds，避免把邻区贴图拉进来。
 	var bounds: Dictionary = _map.get("region_bounds", {})
 	for rid in bounds.keys():
 		var rect: Rect2i = bounds[rid]
@@ -160,9 +178,11 @@ func _build_terrain() -> void:
 		var s := Sprite2D.new()
 		s.texture = tex
 		s.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		s.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 		s.centered = false
+		s.region_enabled = true
+		s.region_rect = Rect2(0, 0, rect.size.x * tile, rect.size.y * tile)
 		s.position = Vector2(rect.position.x * tile, rect.position.y * tile)
-		s.scale = Vector2(float(rect.size.x * tile) / float(tex.get_width()), float(rect.size.y * tile) / float(tex.get_height()))
 		s.z_index = -3
 		ground.add_child(s)
 		## 装饰点缀
@@ -335,10 +355,14 @@ func _spawn_player() -> void:
 	if sid != "" and _markers.has(sid):
 		spawn_pos = _markers[sid]
 	player.global_position = spawn_pos
+	player.side_view = false
 	player.combat_enabled = true
 	player.apply_meta_brand(RunSession.brand_quality)
 	player.died.connect(_on_player_died)
 	player.toast.connect(_on_toast)
+	if player.has_signal("loud_skill_used") and not player.loud_skill_used.is_connected(_on_loud_skill):
+		player.loud_skill_used.connect(_on_loud_skill)
+	_atmosphere = AtmosphereScript.install(world, self, "moss", 0.22, false)
 	_reveal_around(player.global_position)
 
 
@@ -497,12 +521,17 @@ func _update_exploration() -> void:
 func _reveal_around(pos: Vector2) -> void:
 	var g := Floor1Generator.world_to_tile(pos)
 	var chunk := Floor1Generator.chunk_of_tile(g)
-	for oy in range(-1, 2):
-		for ox in range(-1, 2):
+	var radius := 1 + MetaProgress.spotlight_level
+	for oy in range(-radius, radius + 1):
+		for ox in range(-radius, radius + 1):
 			_reveal_chunk(chunk + Vector2i(ox, oy))
 
 
 func _reveal_chunk(ck: Vector2i) -> void:
+	var max_cx := ceili(float(Floor1Generator.MAP_W) / float(Floor1Generator.CHUNK))
+	var max_cy := ceili(float(Floor1Generator.MAP_H) / float(Floor1Generator.CHUNK))
+	if ck.x < 0 or ck.y < 0 or ck.x >= max_cx or ck.y >= max_cy:
+		return
 	if _explored_chunks.has(ck):
 		return
 	_explored_chunks[ck] = true
@@ -553,6 +582,7 @@ func _setup_hud() -> void:
 		player.interact_prompt_changed.connect(_on_interact_prompt_changed)
 	if not MetaProgress.changed.is_connected(_on_meta_progress_changed):
 		MetaProgress.changed.connect(_on_meta_progress_changed)
+	_ensure_runtime_hud()
 	_update_hud()
 	_on_interact_prompt_changed(player.get_interact_prompt())
 
@@ -765,6 +795,19 @@ func _refresh_minimap() -> void:
 func _update_hud() -> void:
 	if player == null:
 		return
+	var mind_txt: String = Loc.t("hud.mind", [MetaProgress.mind_level])
+	var value_txt: String = Loc.t("hud.mind_value", [MetaProgress.mind_value])
+	var special_txt: String = Loc.t("hud.special_mind_yes") if RunSession.special_mind else Loc.t("hud.special_mind_no")
+	var mind_line := "%s | %s | %s" % [mind_txt, value_txt, special_txt]
+	if _skill_bar:
+		if _skill_bar.has_method("set_vitals"):
+			_skill_bar.set_vitals(player.hp, player.max_hp)
+		if _skill_bar.has_method("set_erosion"):
+			_skill_bar.set_erosion(erosion.value, ErosionSystem.MAX_VALUE, erosion.tier)
+		if _skill_bar.has_method("set_xp"):
+			_skill_bar.set_xp(MetaProgress.explorer_level, MetaProgress.explorer_xp, MetaProgress.xp_to_next_level())
+		if _skill_bar.has_method("set_mind_line"):
+			_skill_bar.set_mind_line(mind_line)
 	if hud.has_node("StatsBar/HpBarBg/HpBarFill"):
 		var fill: ColorRect = hud.get_node("StatsBar/HpBarBg/HpBarFill")
 		var bg: ColorRect = hud.get_node("StatsBar/HpBarBg")
@@ -778,17 +821,11 @@ func _update_hud() -> void:
 	if hud.has_node("StatsBar/HpText"):
 		hud.get_node("StatsBar/HpText").text = Loc.t("hud.hp", [int(round(player.hp)), int(round(player.max_hp))])
 	if hud.has_node("StatsBar/AttrText"):
-		var mind_txt: String = Loc.t("hud.mind", [MetaProgress.mind_level])
-		var value_txt: String = Loc.t("hud.mind_value", [MetaProgress.mind_value])
-		var special_txt: String = Loc.t("hud.special_mind_yes") if RunSession.special_mind else Loc.t("hud.special_mind_no")
-		hud.get_node("StatsBar/AttrText").text = "%s | %s | %s" % [mind_txt, value_txt, special_txt]
+		hud.get_node("StatsBar/AttrText").text = mind_line
 	if hud.has_node("BagCountLabel"):
 		hud.get_node("BagCountLabel").text = Loc.t("hud.bag", [player.inventory.used_count(), player.inventory.max_slots()])
-	var learned_n := MetaProgress.learned_runes.size()
-	var skills_text: String = Loc.t("hud.skills_learned", [learned_n]) if learned_n > 0 else Loc.t("hud.runes_none")
-	var mind_line: String = Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()])
 	if hud.has_node("SkillsHudLabel"):
-		hud.get_node("SkillsHudLabel").text = "%s | %s" % [skills_text, mind_line]
+		hud.get_node("SkillsHudLabel").visible = false
 	var bname: String = Loc.t(str(MindTable.BRAND_STATS[RunSession.brand_quality].get("name_key", "brand.iron")))
 	var rname := RegionCatalog.display_name(_current_region) if _current_region != "" else "—"
 	if hud.has_node("TopLeft/FloorLabel"):
@@ -804,6 +841,86 @@ func _update_hud() -> void:
 			Loc.t("hud.brand", [bname]),
 		]
 	_update_quest_hud()
+	if hud.has_node("TopLeft/XpLabel"):
+		hud.get_node("TopLeft/XpLabel").visible = false
+
+
+func _ensure_runtime_hud() -> void:
+	if hud and hud.has_node("StatsBar"):
+		hud.get_node("StatsBar").visible = false
+	if hud and hud.has_node("SkillsHudLabel"):
+		hud.get_node("SkillsHudLabel").visible = false
+	if hud and not hud.has_node("SkillBar"):
+		_skill_bar = Control.new()
+		_skill_bar.name = "SkillBar"
+		_skill_bar.set_script(SkillBarScript)
+		hud.add_child(_skill_bar)
+		if _skill_bar.has_method("bind_player"):
+			_skill_bar.bind_player(player)
+	elif hud and hud.has_node("SkillBar"):
+		_skill_bar = hud.get_node("SkillBar")
+		if _skill_bar.has_method("bind_player"):
+			_skill_bar.bind_player(player)
+	if hud.has_node("TopLeft/XpLabel"):
+		hud.get_node("TopLeft/XpLabel").visible = false
+
+
+func _region_biome(rid: String) -> String:
+	match rid:
+		RegionCatalog.REGION_B:
+			return ST.BIOME_COPPER
+		RegionCatalog.REGION_C, RegionCatalog.REGION_BOSS:
+			return ST.BIOME_ECHO
+		_:
+			return ST.BIOME_MOSS
+
+
+func _apply_biome_runtime() -> void:
+	if player == null or biome_rules == null:
+		return
+	var biome := _region_biome(_current_region)
+	biome_rules.set_biome(biome)
+	if _atmosphere and _atmosphere.has_method("set_biome"):
+		_atmosphere.call("set_biome", biome)
+	var in_mud := biome == ST.BIOME_MOSS and fmod(player.global_position.x + player.global_position.y, 96.0) < 30.0
+	var in_fog := biome == ST.BIOME_MOSS
+	biome_rules.apply_to_player(player, in_mud, in_fog)
+	player.move_speed_mult *= erosion.move_mult()
+	if erosion.skill_slots_locked() > 0:
+		var locked := str(player.get("_locked_skill_slot"))
+		if locked == "":
+			for slot in CrystalCatalog.HOTKEY_SLOTS:
+				if MetaProgress.skill_in_slot(slot) != "":
+					player.set_erosion_locked_slot(slot)
+					break
+	else:
+		player.set_erosion_locked_slot("")
+
+
+func _on_loud_skill(kind: String) -> void:
+	if biome_rules:
+		biome_rules.on_loud_skill(player, kind)
+
+
+func _on_reinforcement(at: Vector2, _biome: String) -> void:
+	var rid := _current_region if _current_region != "" else RegionCatalog.REGION_A
+	var pool: Array = RegionCatalog.ENEMY_POOL.get(rid, RegionCatalog.ENEMY_POOL[RegionCatalog.REGION_A])
+	if pool.is_empty():
+		return
+	var def: Dictionary = pool[randi() % pool.size()].duplicate()
+	_spawn_enemy_at(at + Vector2(randf_range(-40, 40), randf_range(-40, 40)), def)
+	if player:
+		player.show_toast(Loc.t("toast.echo_reinforce"), PitEventLog.Category.WARN)
+
+
+func _on_erosion_value(value: float, max_value: float) -> void:
+	if _skill_bar and _skill_bar.has_method("set_erosion"):
+		_skill_bar.set_erosion(value, max_value, erosion.tier)
+
+
+func _on_erosion_tier(tier: int) -> void:
+	if player:
+		player.show_toast(Loc.t("toast.erosion_tier", [tier]), PitEventLog.Category.SYSTEM)
 
 
 func _on_extract(_by: Node) -> void:

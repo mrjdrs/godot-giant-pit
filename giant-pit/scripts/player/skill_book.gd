@@ -1,84 +1,69 @@
 extends RefCounted
-## 已学技能/属性符文。真源在 MetaProgress.learned_runes。
+## 已感悟技能。真源在 MetaProgress.learned_skills + skill_loadout。
 
-const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 
 signal changed
 
-const SLOT_BASIC := "basic"
-const SLOT_FINISHER := "finisher"
-const SLOT_DODGE := "dodge"
-const SLOT_DEFEND := "defend"
-const SLOT_ULTIMATE := "ultimate"
-const SLOT_PASSIVE := "passive"
+const SLOT_RMB := "rmb"
+const SLOT_Q := "q"
+const SLOT_E := "e"
+const SLOT_R := "r"
+const SLOT_F := "f"
+const SLOT_C := "c"
+const HOTKEYS := ["rmb", "q", "e", "r", "f", "c"]
 
 const SLOT_ICONS := {
-	SLOT_BASIC: "res://assets/ui/icons/skills/skill_slot_basic.png",
-	SLOT_FINISHER: "res://assets/ui/icons/skills/skill_slot_finisher.png",
-	SLOT_DODGE: "res://assets/ui/icons/skills/skill_slot_dodge.png",
-	SLOT_DEFEND: "res://assets/ui/icons/skills/skill_slot_defend.png",
-	SLOT_ULTIMATE: "res://assets/ui/icons/skills/skill_slot_ultimate.png",
-	SLOT_PASSIVE: "res://assets/ui/icons/skills/skill_slot_passive.png",
+	"rmb": "res://assets/ui/icons/skills/skill_slot_finisher.png",
+	"q": "res://assets/ui/icons/skills/skill_slot_basic.png",
+	"e": "res://assets/ui/icons/skills/skill_slot_ultimate.png",
+	"r": "res://assets/ui/icons/skills/skill_slot_defend.png",
+	"f": "res://assets/ui/icons/skills/skill_slot_dodge.png",
+	"c": "res://assets/ui/icons/skills/skill_slot_passive.png",
 }
 
-const MVP_ACTIVE_SLOTS := [SLOT_BASIC, SLOT_FINISHER, SLOT_DODGE]
 
-
-func has(rune_id: String) -> bool:
-	return MetaProgress.has_learned(rune_id)
+func has(core_id: String) -> bool:
+	return MetaProgress.has_learned_skill(core_id)
 
 
 func learned_dict() -> Dictionary:
-	return MetaProgress.learned_runes.duplicate()
+	return MetaProgress.learned_skills.duplicate()
+
+
+func skill_in_slot(slot: String) -> String:
+	return MetaProgress.skill_in_slot(slot)
 
 
 func rune_for_slot(slot: String) -> String:
-	for rune_id in MetaProgress.learned_runes.keys():
-		if not bool(MetaProgress.learned_runes[rune_id]):
-			continue
-		if RuneCatalog.skill_slot(str(rune_id)) == slot:
-			return str(rune_id)
-	return ""
+	## 兼容旧面板命名
+	return skill_in_slot(slot)
 
 
-func is_slot_unlocked(slot: String) -> bool:
-	if slot == SLOT_DEFEND:
-		return has("rune_s_ironwall")
-	if slot == SLOT_ULTIMATE:
-		return false
-	return slot in MVP_ACTIVE_SLOTS or rune_for_slot(slot) != ""
+func is_slot_unlocked(_slot: String) -> bool:
+	return true
 
 
-## source: Inventory（坑内）或 null+stash（枢纽）
-## 返回 "ok" | "unknown" | "learned" | "no_rune" | "mind_level" | "no_mind" | "brand" | "stash"
-func try_learn(rune_id: String, inventory = null, from_stash: bool = false, brand_quality: String = "iron") -> String:
-	if not RuneCatalog.DEFS.has(rune_id):
-		return "unknown"
-	if not RuneCatalog.matches_brand(rune_id, brand_quality):
-		return "brand"
-	if has(rune_id):
-		return "learned"
-	var req := RuneCatalog.mind_level_req(rune_id)
-	if MetaProgress.mind_level < req:
-		return "mind_level"
-	var cost := RuneCatalog.learn_cost(rune_id)
-	if not MetaProgress.can_afford_mind(cost):
-		return "no_mind"
-	if from_stash:
-		if MetaProgress.stash_count(rune_id) < 1:
-			return "no_rune"
-		if not MetaProgress.consume_stash({rune_id: 1}):
-			return "no_rune"
-	else:
-		if inventory == null or not inventory.consume_rune(rune_id):
-			return "no_rune"
-	if not MetaProgress.consume_mind_value(cost):
-		## 念力已检查过；若失败则尽量回滚道具
-		if from_stash:
-			MetaProgress.add_stash(rune_id, 1)
-		elif inventory != null:
-			inventory.add_rune_as_item(rune_id)
-		return "no_mind"
-	MetaProgress.mark_learned(rune_id)
-	changed.emit()
-	return "ok"
+func try_comprehend(core_id: String, inventory = null, from_stash: bool = false) -> String:
+	var r := MetaProgress.try_comprehend(core_id, inventory, from_stash)
+	if r == "ok":
+		changed.emit()
+	return r
+
+
+func try_learn(core_id: String, inventory = null, from_stash: bool = false, _brand_quality: String = "iron") -> String:
+	return try_comprehend(core_id, inventory, from_stash)
+
+
+func assign_slot(slot: String, core_id: String) -> String:
+	var r := MetaProgress.assign_skill_slot(slot, core_id)
+	if r == "ok":
+		changed.emit()
+	return r
+
+
+func cycle_slot(slot: String) -> String:
+	var r := MetaProgress.cycle_skill_slot(slot)
+	if r == "ok":
+		changed.emit()
+	return r

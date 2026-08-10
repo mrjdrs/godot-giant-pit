@@ -1,12 +1,11 @@
 extends Control
-## 右下角事件日志：击杀、拾取、系统等，按类别着色。
+## 右侧事件日志：近 50 条，裁剪在框内，滚轮翻阅。
 
 class_name PitEventLog
 
 enum Category { KILL, PICKUP, RUNE, SYSTEM, WARN }
 
-const MAX_LINES := 10
-const FADE_SEC := 8.0
+const MAX_LINES := 50
 
 const CATEGORY_COLORS := {
 	Category.KILL: Color(1.0, 0.55, 0.45, 1),
@@ -16,20 +15,45 @@ const CATEGORY_COLORS := {
 	Category.WARN: Color(1.0, 0.88, 0.42, 1),
 }
 
-@onready var _list: VBoxContainer = $Panel/Margin/List
+var _list: VBoxContainer
+var _scroll: ScrollContainer
+var _stick_to_bottom: bool = true
 
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	if _list == null:
-		_build_fallback()
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	clip_contents = true
+	_ensure_tree()
+	if _scroll:
+		_scroll.get_v_scroll_bar().changed.connect(_on_scroll_changed)
+	_fit_list_width()
+	resized.connect(_fit_list_width)
+
+
+func _fit_list_width() -> void:
+	if _list == null or _scroll == null:
+		return
+	_list.custom_minimum_size.x = maxf(_scroll.size.x - 4.0, 80.0)
+
+
+func _ensure_tree() -> void:
+	_list = get_node_or_null("Panel/Margin/Scroll/List") as VBoxContainer
+	_scroll = get_node_or_null("Panel/Margin/Scroll") as ScrollContainer
+	if _list != null and _scroll != null:
+		_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+		_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+		return
+	_build_fallback()
 
 
 func _build_fallback() -> void:
+	for c in get_children():
+		c.queue_free()
 	var panel := Panel.new()
 	panel.name = "Panel"
 	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(panel)
 	var margin := MarginContainer.new()
 	margin.name = "Margin"
@@ -39,32 +63,61 @@ func _build_fallback() -> void:
 	margin.add_theme_constant_override("margin_top", 4)
 	margin.add_theme_constant_override("margin_bottom", 4)
 	panel.add_child(margin)
+	_scroll = ScrollContainer.new()
+	_scroll.name = "Scroll"
+	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	margin.add_child(_scroll)
 	_list = VBoxContainer.new()
 	_list.name = "List"
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	margin.add_child(_list)
+	_list.add_theme_constant_override("separation", 2)
+	_scroll.add_child(_list)
 
 
 func push(text: String, category: int = Category.SYSTEM, color_override: Color = Color.TRANSPARENT) -> void:
 	if text.strip_edges() == "" or _list == null:
 		return
+	_refresh_stick()
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	label.custom_minimum_size.x = size.x - 16.0 if size.x > 32.0 else 220.0
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	label.add_theme_font_size_override("font_size", 13)
 	var col: Color = color_override if color_override.a > 0.01 else CATEGORY_COLORS.get(category, CATEGORY_COLORS[Category.SYSTEM])
 	label.add_theme_color_override("font_color", col)
-	label.modulate.a = 0.0
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_list.add_child(label)
-	## remove_child first: queue_free alone does not lower get_child_count until frame end.
 	var guard := 0
-	while _list.get_child_count() > MAX_LINES and guard < 64:
+	while _list.get_child_count() > MAX_LINES and guard < 80:
 		var old: Node = _list.get_child(0)
 		_list.remove_child(old)
 		old.queue_free()
 		guard += 1
-	var tw := label.create_tween()
-	tw.tween_property(label, "modulate:a", 1.0, 0.12)
-	tw.tween_interval(FADE_SEC)
-	tw.tween_property(label, "modulate:a", 0.35, 0.8)
+	if _stick_to_bottom:
+		call_deferred("_scroll_to_latest")
+
+
+func _refresh_stick() -> void:
+	if _scroll == null:
+		_stick_to_bottom = true
+		return
+	var bar := _scroll.get_v_scroll_bar()
+	_stick_to_bottom = (bar.max_value - _scroll.scroll_vertical) < 56.0
+
+
+func _on_scroll_changed() -> void:
+	_refresh_stick()
+
+
+func _scroll_to_latest() -> void:
+	if _scroll == null or _list == null or _list.get_child_count() == 0:
+		return
+	var last: Control = _list.get_child(_list.get_child_count() - 1) as Control
+	if last:
+		_scroll.ensure_control_visible(last)
+	else:
+		var bar := _scroll.get_v_scroll_bar()
+		_scroll.scroll_vertical = int(bar.max_value)

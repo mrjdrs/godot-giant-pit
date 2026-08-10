@@ -1,7 +1,7 @@
-# Art Manifest — 侧视坑内 + Hub 营地（现行）
+# Art Manifest — 俯视坑内 + Hub 营地（现行 · doc v2.0）
 
-> 规格：侧视角色 32×48；tile 32×32；视差背景 160×96；图标 32×32；整面板 320×240  
-> 风格：炼金奇幻 / **侧视卡通像素**（坑内）+ **俯视卡通像素**（Hub）  
+> 规格：俯视角色约 32×32（legacy explorer / 侧视 pose 翻转）；tile 32×32；图标 32×32；整面板 320×240  
+> 风格：炼金奇幻 / **俯视卡通像素**（坑内 + Hub）；侧视套归档参考  
 > 生成：`tools/gen_sideview_art.py`（侧视 + Hub 质感）｜`tools/gen_mvp_pixel_art.py`（legacy UI）  
 > 色板：土石褐 + 炼金青 `#3D8B7A` + 烙印金 `#E8A838`｜轮廓 `#2A1F18`  
 > 规范：见 `doc/new/07_美术质感规范.md`

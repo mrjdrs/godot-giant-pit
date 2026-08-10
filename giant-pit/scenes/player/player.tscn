@@ -6,7 +6,7 @@
 [ext_resource type="Script" path="res://scripts/combat/hitbox.gd" id="4_hitbox"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_body"]
-size = Vector2(14, 28)
+size = Vector2(16, 16)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_hit"]
 size = Vector2(28, 22)
@@ -19,16 +19,14 @@ floor_max_angle = 0.785398
 script = ExtResource("1_player")
 
 [node name="Sprite" type="Sprite2D" parent="."]
-position = Vector2(0, -8)
 texture = ExtResource("2_body")
 texture_filter = 0
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
-position = Vector2(0, -6)
 shape = SubResource("RectangleShape2D_body")
 
 [node name="BladePivot" type="Node2D" parent="."]
-position = Vector2(0, -10)
+position = Vector2(0, 0)
 
 [node name="BladeSprite" type="Sprite2D" parent="BladePivot"]
 position = Vector2(14, 0)

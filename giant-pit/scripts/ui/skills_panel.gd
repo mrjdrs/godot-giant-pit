@@ -2,6 +2,7 @@ extends Control
 ## 技能学习面板。布局对齐背包/材料仓库：Panel 外壳 + chrome 格子。
 
 const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 const SkillBook = preload("res://scripts/player/skill_book.gd")
 
 signal closed
@@ -15,12 +16,12 @@ const PANEL_BG := Color(0.12, 0.11, 0.10, 0.97)
 const INNER_BG := Color(0.09, 0.08, 0.07, 0.95)
 
 const SKILL_SLOT_DEFS := [
-	["Basic", SkillBook.SLOT_BASIC, true],
-	["Finisher", SkillBook.SLOT_FINISHER, true],
-	["Dodge", SkillBook.SLOT_DODGE, true],
-	["Defend", SkillBook.SLOT_DEFEND, false],
-	["Ultimate", SkillBook.SLOT_ULTIMATE, false],
-	["Passive", SkillBook.SLOT_PASSIVE, false],
+	["Rmb", "rmb", true],
+	["Q", "q", true],
+	["E", "e", true],
+	["R", "r", true],
+	["F", "f", true],
+	["C", "c", true],
 ]
 
 var _player: Node = null
@@ -156,6 +157,11 @@ func _build_skill_slots() -> void:
 		label.add_theme_font_size_override("font_size", 11)
 		label.add_theme_color_override("font_color", Color(0.85, 0.8, 0.72, 1))
 		col.add_child(label)
+		var captured: String = str(def[1])
+		panel.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				_on_slot_clicked(captured)
+		)
 
 
 func bind_player(p: Node, hub_mode: bool = false) -> void:
@@ -219,9 +225,11 @@ func _refresh_skill_slots() -> void:
 		var mvp_active: bool = bool(def[2])
 		var learned_id := ""
 		if _player != null:
-			learned_id = _player.skills.rune_for_slot(slot_id)
+			learned_id = _player.skills.skill_in_slot(slot_id)
 		var icon_path: String = SkillBook.SLOT_ICONS.get(slot_id, "")
-		if learned_id != "" and RuneCatalog.DEFS.has(learned_id):
+		if learned_id != "" and CrystalCatalog.has_id(learned_id):
+			icon_path = CrystalCatalog.icon_path(learned_id)
+		elif learned_id != "" and RuneCatalog.DEFS.has(learned_id):
 			icon_path = str(RuneCatalog.DEFS[learned_id].get("icon", icon_path))
 		var panel: Panel = col.get_node("Slot")
 		var icon: TextureRect = panel.get_node("Icon")
@@ -242,24 +250,25 @@ func _refresh_skill_slots() -> void:
 func _owned_runes() -> Array:
 	var out: Array = []
 	if _hub_mode or _player == null:
-		var kind := "rune_skill" if _tab_skill else "rune_attr"
+		var kind := "core_skill" if _tab_skill else "core_attr"
 		for e in MetaProgress.stash_as_entries(kind):
-			var rid := str(e.get("id"))
-			if MetaProgress.has_learned(rid):
-				continue
 			out.append(e)
-	else:
+		for e2 in MetaProgress.stash_as_entries("rune_skill" if _tab_skill else "rune_attr"):
+			out.append(e2)
+	elif _player:
 		for e in _player.inventory.slots:
-			if e.get("type") != "rune":
-				continue
+			var t := str(e.get("type"))
 			var rid := str(e.get("id"))
-			if MetaProgress.has_learned(rid):
-				continue
-			if _tab_skill and not RuneCatalog.is_skill(rid):
-				continue
-			if not _tab_skill and not RuneCatalog.is_attr(rid):
-				continue
-			out.append(e)
+			if t == "core":
+				if _tab_skill and CrystalCatalog.is_skill(rid):
+					out.append(e)
+				elif not _tab_skill and CrystalCatalog.is_attr(rid):
+					out.append(e)
+			elif t == "rune":
+				if _tab_skill and RuneCatalog.is_skill(rid):
+					out.append(e)
+				elif not _tab_skill and RuneCatalog.is_attr(rid):
+					out.append(e)
 	return out
 
 
@@ -300,14 +309,17 @@ func _refresh_detail() -> void:
 			if has_node("Body/RightCol/DetailPanel/DetailIcon"):
 				$Body/RightCol/DetailPanel/DetailIcon.texture = null
 		else:
-			var cost := RuneCatalog.learn_cost(_selected_rune)
-			var req := RuneCatalog.mind_level_req(_selected_rune)
-			var effect_key := "rune.%s.effect" % _selected_rune.trim_prefix("rune_")
+			var cost := CrystalCatalog.learn_cost(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.learn_cost(_selected_rune)
+			var req := CrystalCatalog.mind_level_req(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.mind_level_req(_selected_rune)
+			var effect_key := "core.%s.effect" % _selected_rune.trim_prefix("core_")
+			if not Loc.has_key(effect_key):
+				effect_key = "rune.%s.effect" % _selected_rune.trim_prefix("rune_")
 			if not Loc.has_key(effect_key):
 				effect_key = "rune.%s.effect" % _selected_rune
 			var effect: String = Loc.t(effect_key) if Loc.has_key(effect_key) else ""
+			var disp := CrystalCatalog.display_name(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.display_name(_selected_rune)
 			detail.text = Loc.t("skill.detail", [
-				RuneCatalog.display_name(_selected_rune),
+				disp,
 				effect,
 				req,
 				cost,
@@ -315,7 +327,7 @@ func _refresh_detail() -> void:
 				MetaProgress.mind_value,
 			])
 			if has_node("Body/RightCol/DetailPanel/DetailIcon"):
-				var path := str(RuneCatalog.DEFS.get(_selected_rune, {}).get("icon", ""))
+				var path := CrystalCatalog.icon_path(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else str(RuneCatalog.DEFS.get(_selected_rune, {}).get("icon", ""))
 				if path != "":
 					$Body/RightCol/DetailPanel/DetailIcon.texture = load(path)
 	var learn_btn: Button = null
@@ -324,11 +336,13 @@ func _refresh_detail() -> void:
 	elif has_node("LearnBtn"):
 		learn_btn = $LearnBtn
 	if learn_btn:
-		var can := _selected_rune != "" \
-			and MetaProgress.mind_level >= RuneCatalog.mind_level_req(_selected_rune) \
-			and MetaProgress.can_afford_mind(RuneCatalog.learn_cost(_selected_rune))
+		var req := CrystalCatalog.mind_level_req(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.mind_level_req(_selected_rune)
+		var cost := CrystalCatalog.learn_cost(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.learn_cost(_selected_rune)
+		var can := _hub_mode and _selected_rune != "" \
+			and MetaProgress.mind_level >= req \
+			and MetaProgress.can_afford_mind(cost)
 		learn_btn.disabled = not can
-		learn_btn.text = Loc.t("skill.learn")
+		learn_btn.text = Loc.t("skill.learn") if _hub_mode else Loc.t("skill.pit_blocked")
 
 
 func _on_rune_pressed(index: int) -> void:
@@ -357,25 +371,34 @@ func _on_hover(index: int, tip: String) -> void:
 				$Body/RightCol/DetailPanel/DetailIcon.texture = slot.get_node("Icon").texture
 
 
+func _on_slot_clicked(slot_id: String) -> void:
+	if _player == null:
+		return
+	if _player.skills.has_method("cycle_slot"):
+		_player.skills.cycle_slot(slot_id)
+	refresh()
+	learned.emit(slot_id)
+
+
 func _on_learn() -> void:
 	if _selected_rune == "" or _player == null:
 		return
+	if not _hub_mode:
+		_toast(Loc.t("skill.pit_blocked"))
+		return
 	var rid := _selected_rune
-	var r: String
-	if _player.has_method("try_learn_rune"):
-		r = _player.try_learn_rune(rid, _hub_mode)
-	else:
-		r = _player.skills.try_learn(rid, null if _hub_mode else _player.inventory, _hub_mode)
+	var r: String = _player.try_learn_rune(rid, true)
+	var disp := CrystalCatalog.display_name(rid) if CrystalCatalog.has_id(rid) else RuneCatalog.display_name(rid)
 	match r:
 		"ok":
 			if _player.has_method("show_toast"):
-				_player.show_toast(Loc.t("skill.learn_ok", [RuneCatalog.display_name(rid)]))
+				_player.show_toast(Loc.t("skill.learn_ok", [disp]))
 			AudioManager.sfx_pickup()
 			_selected_rune = ""
 			refresh()
 			learned.emit(rid)
 		"mind_level":
-			_toast(Loc.t("skill.need_level", [RuneCatalog.mind_level_req(rid)]))
+			_toast(Loc.t("skill.need_level", [CrystalCatalog.mind_level_req(rid) if CrystalCatalog.has_id(rid) else RuneCatalog.mind_level_req(rid)]))
 		"no_mind":
 			_toast(Loc.t("skill.need_mind"))
 		"no_rune":

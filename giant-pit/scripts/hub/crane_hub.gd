@@ -186,6 +186,7 @@ func _build_hub() -> void:
 	_add_facility("winch", Vector2(40, 40), "res://assets/props/side/winch.png")
 	_add_facility("spotlight", Vector2(120, 60), "res://assets/props/side/spotlight.png")
 	_add_facility("awaken", Vector2(0, 80), "res://assets/tiles/hub/hub_alchemy.png")
+	_add_facility("comprehend", Vector2(-160, 40), "res://assets/tiles/hub/hub_quiet_door.png")
 	_add_facility("pit", Vector2(80, 80), "res://assets/tiles/hub/hub_pit_mouth.png")
 
 	if _atmosphere and _atmosphere.has_method("add_glow"):
@@ -304,6 +305,8 @@ func _on_facility(facility_id: String, _by: Node) -> void:
 			_open_spotlight()
 		"awaken":
 			_open_awaken()
+		"comprehend":
+			_open_comprehend()
 		"pit":
 			_open_pit()
 
@@ -792,9 +795,14 @@ func _upgrade_any() -> void:
 	_open_alchemy()
 
 
+func _open_comprehend() -> void:
+	if sheet_host:
+		sheet_host.toggle_skills()
+
+
 func _enter_pit(spawn_id: String = "") -> void:
 	RunSession.begin_run(spawn_id)
-	get_tree().change_scene_to_file("res://scenes/pit/side_pit_floor.tscn")
+	get_tree().change_scene_to_file("res://scenes/pit/pit_floor_01.tscn")
 
 
 func _enter_pit_via_warp() -> void:

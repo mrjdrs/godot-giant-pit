@@ -95,7 +95,7 @@ func _build_layout() -> void:
 	_free_child_named("Equip")
 
 	var keys := [
-		"Hp", "MindVal", "MindLv", "Vit", "Str", "Patk", "Pdef", "Agi", "Int", "Crit", "CritDmg",
+		"Hp", "MindVal", "MindLv", "ExpLv", "ExpXp", "Vit", "Str", "Patk", "Pdef", "Crit", "CritDmg",
 	]
 	var ekeys := ["Weapon", "Chest", "Pendant"]
 
@@ -279,12 +279,12 @@ func refresh() -> void:
 	_set_row("Hp", "icon_hp", Loc.t("stat.hp"), "%d/%d" % [int(_player.hp), int(_player.max_hp)], true)
 	_set_row("MindVal", "icon_mind", Loc.t("stat.mind_value"), "%d/%d" % [MetaProgress.mind_value, MetaProgress.mind_value_max()], true)
 	_set_row("MindLv", "icon_mind_lv", Loc.t("stat.mind_level"), str(MetaProgress.mind_level), true)
+	_set_row("ExpLv", "icon_mind_lv", Loc.t("stat.explorer_lv"), str(MetaProgress.explorer_level), true)
+	_set_row("ExpXp", "icon_mind", Loc.t("stat.explorer_xp"), "%d/%d" % [MetaProgress.explorer_xp, MetaProgress.xp_to_next_level()], true)
 	_set_row("Vit", "icon_vitality", Loc.t("stat.vitality"), "%.0f" % st.vitality, true)
 	_set_row("Str", "icon_str", Loc.t("stat.strength"), "%.0f" % st.strength, true)
 	_set_row("Patk", "icon_patk", Loc.t("stat.patk"), "%.1f" % st.patk, true)
 	_set_row("Pdef", "icon_pdef", Loc.t("stat.pdef"), "%.1f" % st.pdef, true)
-	_set_row("Agi", "icon_agi", Loc.t("stat.agi"), "—", false)
-	_set_row("Int", "icon_int", Loc.t("stat.int"), "—", false)
 	_set_row("Crit", "icon_crit", Loc.t("stat.crit"), ("%.0f%%" % (st.crit * 100.0)) if st.crit_enabled else "—", st.crit_enabled)
 	_set_row("CritDmg", "icon_critdmg", Loc.t("stat.critdmg"), ("%.0f%%" % (st.critdmg * 100.0)) if st.critdmg_enabled else "—", st.critdmg_enabled)
 

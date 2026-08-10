@@ -22,7 +22,7 @@ func setup(p_velocity: Vector2, p_damage: float, p_gravity: float = 0.0, p_lifet
 
 func _ready() -> void:
 	collision_layer = 32
-	collision_mask = 1
+	collision_mask = 2
 	monitoring = true
 	body_entered.connect(_on_body_entered)
 

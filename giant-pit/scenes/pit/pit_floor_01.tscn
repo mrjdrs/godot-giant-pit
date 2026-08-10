@@ -62,6 +62,7 @@ text = "0/12"
 horizontal_alignment = 2
 
 [node name="SkillsHudLabel" type="Label" parent="HUD" unique_id=434620214]
+visible = false
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -90,14 +91,15 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -260.0
-offset_top = -108.0
+offset_top = -184.0
 offset_right = 260.0
-offset_bottom = -76.0
+offset_bottom = -158.0
 theme_override_colors/font_color = Color(1, 0.92, 0.55, 1)
 theme_override_font_sizes/font_size = 16
 horizontal_alignment = 1
 
 [node name="StatsBar" type="VBoxContainer" parent="HUD" unique_id=850399435]
+visible = false
 anchors_preset = 7
 anchor_left = 0.5
 anchor_top = 1.0
@@ -135,18 +137,19 @@ text = "念力"
 horizontal_alignment = 1
 
 [node name="EventLog" type="Control" parent="HUD" unique_id=509898382]
+clip_contents = true
 anchors_preset = 3
 anchor_left = 1.0
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -300.0
-offset_top = -280.0
+offset_left = -276.0
+offset_top = -420.0
 offset_right = -12.0
-offset_bottom = -152.0
+offset_bottom = -140.0
 grow_horizontal = 0
 grow_vertical = 0
-mouse_filter = 2
+mouse_filter = 0
 script = ExtResource("4_eventlog")
 
 [node name="Panel" type="Panel" parent="HUD/EventLog" unique_id=509898383]
@@ -155,7 +158,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-mouse_filter = 2
+mouse_filter = 0
 
 [node name="Margin" type="MarginContainer" parent="HUD/EventLog/Panel" unique_id=509898384]
 layout_mode = 0
@@ -163,13 +166,20 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-mouse_filter = 2
+mouse_filter = 0
 theme_override_constants/margin_left = 6
 theme_override_constants/margin_top = 4
 theme_override_constants/margin_right = 6
 theme_override_constants/margin_bottom = 4
 
-[node name="List" type="VBoxContainer" parent="HUD/EventLog/Panel/Margin" unique_id=509898385]
+[node name="Scroll" type="ScrollContainer" parent="HUD/EventLog/Panel/Margin" unique_id=509898386]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+mouse_filter = 0
+
+[node name="List" type="VBoxContainer" parent="HUD/EventLog/Panel/Margin/Scroll" unique_id=509898385]
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
@@ -238,13 +248,14 @@ offset_bottom = 248.0
 text = "关闭"
 
 [node name="Minimap" type="Control" parent="HUD" unique_id=1427979339]
+clip_contents = true
 layout_mode = 3
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
 offset_left = 12.0
-offset_top = -146.0
-offset_right = 134.0
+offset_top = -160.0
+offset_right = 160.0
 offset_bottom = -12.0
 grow_vertical = 0
 script = ExtResource("3_0o1em")

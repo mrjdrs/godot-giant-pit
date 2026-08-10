@@ -5,6 +5,7 @@ class_name ItemSlotGrid
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
 const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
 const ItemCatalog = preload("res://scripts/items/item_catalog.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 
 signal slot_pressed(index: int)
 signal slot_hovered(index: int, tip: String)
@@ -125,6 +126,12 @@ func _tooltip_for(index: int) -> String:
 	var e: Dictionary = _entries[index]
 	var t: String = str(e.get("type", "mat"))
 	var id: String = str(e.get("id", ""))
+	if t == "core":
+		var effect_key := "core.%s.effect" % id.trim_prefix("core_")
+		if not Loc.has_key(effect_key):
+			effect_key = "rune.%s.effect" % id
+		var effect: String = Loc.t(effect_key) if Loc.has_key(effect_key) else ""
+		return Loc.t("item.rune_tip", [CrystalCatalog.display_name(id), CrystalCatalog.tier_label(id), effect])
 	if t == "rune":
 		var effect_key := "rune.%s.effect" % id.trim_prefix("rune_")
 		if not Loc.has_key(effect_key):
@@ -186,7 +193,9 @@ func set_stash_dict(stash: Dictionary) -> void:
 	for mid in keys:
 		var sid := str(mid)
 		var entry_type := "mat"
-		if RuneCatalog.DEFS.has(sid):
+		if CrystalCatalog.has_id(sid):
+			entry_type = "core"
+		elif RuneCatalog.DEFS.has(sid):
 			entry_type = "rune"
 		elif ItemCatalog.ITEMS.has(sid):
 			entry_type = "item"
@@ -220,6 +229,8 @@ func _icon_for_entry(e: Dictionary) -> Texture2D:
 	var id: String = str(e.get("id", ""))
 	if t == "rune":
 		return _rune_icon(id)
+	if t == "core":
+		return _core_icon(id)
 	if t == "item":
 		return _item_icon(id)
 	return _mat_icon(id)
@@ -228,6 +239,13 @@ func _icon_for_entry(e: Dictionary) -> Texture2D:
 func _mat_icon(mat_id: String) -> Texture2D:
 	var def: Dictionary = MaterialCatalog.MATERIALS.get(mat_id, {})
 	var path: String = str(def.get("icon", ""))
+	if path.is_empty():
+		return null
+	return load(path) as Texture2D
+
+
+func _core_icon(core_id: String) -> Texture2D:
+	var path := CrystalCatalog.icon_path(core_id)
 	if path.is_empty():
 		return null
 	return load(path) as Texture2D

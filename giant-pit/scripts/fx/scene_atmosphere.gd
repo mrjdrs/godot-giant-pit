@@ -20,22 +20,24 @@ var _overlay_root: Node
 var _parallax: ParallaxBackground
 var _modulate: CanvasModulate
 var _vignette_layer: CanvasLayer
-var _current_biome: String = "moss"
+var _current_biome: String = ""
+var _use_parallax: bool = true
 
 
-static func install(world: Node2D, overlay_root: Node, biome: String = "moss", vignette_strength: float = 0.22) -> Node2D:
+static func install(world: Node2D, overlay_root: Node, biome: String = "moss", vignette_strength: float = 0.22, use_parallax: bool = true) -> Node2D:
 	var script_res: Script = load("res://scripts/fx/scene_atmosphere.gd")
 	var atm: Node2D = Node2D.new()
 	atm.set_script(script_res)
 	atm.name = "Atmosphere"
 	world.add_child(atm)
-	atm.call("_setup", world, overlay_root, biome, vignette_strength)
+	atm.call("_setup", world, overlay_root, biome, vignette_strength, use_parallax)
 	return atm
 
 
-func _setup(world: Node2D, overlay_root: Node, biome: String, vignette_strength: float) -> void:
+func _setup(world: Node2D, overlay_root: Node, biome: String, vignette_strength: float, use_parallax: bool = true) -> void:
 	_world = world
 	_overlay_root = overlay_root
+	_use_parallax = use_parallax
 	z_index = -20
 
 	_modulate = CanvasModulate.new()
@@ -43,11 +45,14 @@ func _setup(world: Node2D, overlay_root: Node, biome: String, vignette_strength:
 	world.add_child(_modulate)
 	world.move_child(_modulate, 0)
 
-	_parallax = ParallaxBackground.new()
-	_parallax.name = "ParallaxBackground"
-	_parallax.scroll_ignore_camera_zoom = true
-	world.add_child(_parallax)
-	world.move_child(_parallax, 1)
+	if _use_parallax:
+		_parallax = ParallaxBackground.new()
+		_parallax.name = "ParallaxBackground"
+		_parallax.scroll_ignore_camera_zoom = true
+		world.add_child(_parallax)
+		world.move_child(_parallax, 1)
+	else:
+		_parallax = null
 
 	_vignette_layer = CanvasLayer.new()
 	_vignette_layer.name = "VignetteLayer"
@@ -68,10 +73,12 @@ func _setup(world: Node2D, overlay_root: Node, biome: String, vignette_strength:
 
 
 func set_biome(biome: String) -> void:
+	var changed := biome != _current_biome
 	_current_biome = biome
 	if _modulate:
 		_modulate.color = BIOME_COLORS.get(biome, Color.WHITE)
-	_rebuild_parallax()
+	if _use_parallax and changed:
+		_rebuild_parallax()
 
 
 func add_glow(pos: Vector2, color: Color = Color(1.0, 0.92, 0.72, 1.0), energy: float = 0.35, radius: float = 120.0) -> PointLight2D:
@@ -86,7 +93,7 @@ func add_glow(pos: Vector2, color: Color = Color(1.0, 0.92, 0.72, 1.0), energy: 
 
 
 func _rebuild_parallax() -> void:
-	if _parallax == null:
+	if _parallax == null or not _use_parallax:
 		return
 	for c in _parallax.get_children():
 		c.queue_free()

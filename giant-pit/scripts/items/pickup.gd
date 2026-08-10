@@ -1,10 +1,11 @@
 extends "res://scripts/pit/interactable.gd"
-## 地上掉落：需靠近按 E 拾取；堆叠时可由玩家 Q 切换目标。
+## 地上掉落：需靠近按空格拾取；堆叠时可由滚轮切换目标。
 
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
 const RuneCatalog = preload("res://scripts/items/rune_catalog.gd")
+const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 
-enum DropType { MATERIAL, RUNE }
+enum DropType { MATERIAL, RUNE, CORE }
 
 @export var drop_type: int = DropType.MATERIAL
 @export var drop_id: String = "beast_scale"
@@ -12,12 +13,24 @@ enum DropType { MATERIAL, RUNE }
 
 @onready var sprite: Sprite2D = $Sprite
 
+var _bob_t: float = 0.0
+var _base_sprite_y: float = 0.0
+
 
 func _ready() -> void:
 	once = false
 	prompt_key = "hud.interact_pickup"
+	z_index = 8
 	super._ready()
+	if sprite:
+		_base_sprite_y = sprite.position.y
 	_apply_icon()
+
+
+func _process(delta: float) -> void:
+	_bob_t += delta
+	if sprite:
+		sprite.position.y = _base_sprite_y + sin(_bob_t * 4.0) * 2.5
 
 
 func setup(p_type: int, p_id: String, p_count: int = 1) -> void:
@@ -39,6 +52,8 @@ func get_display_name() -> String:
 func _display_name() -> String:
 	if drop_type == DropType.MATERIAL:
 		return MaterialCatalog.display_name(drop_id)
+	if drop_type == DropType.CORE:
+		return CrystalCatalog.display_name(drop_id)
 	return RuneCatalog.display_name(drop_id)
 
 
@@ -48,11 +63,19 @@ func _apply_icon() -> void:
 	var path := ""
 	if drop_type == DropType.MATERIAL and MaterialCatalog.MATERIALS.has(drop_id):
 		path = str(MaterialCatalog.MATERIALS[drop_id].get("icon", ""))
+	elif drop_type == DropType.CORE and CrystalCatalog.has_id(drop_id):
+		path = CrystalCatalog.icon_path(drop_id)
 	elif drop_type == DropType.RUNE and RuneCatalog.DEFS.has(drop_id):
 		path = str(RuneCatalog.DEFS[drop_id].get("icon", ""))
 	if path != "":
 		sprite.texture = load(path)
 		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	if drop_type == DropType.CORE:
+		sprite.scale = Vector2(1.45, 1.45)
+		modulate = Color(1.08, 1.02, 0.88, 1)
+	else:
+		sprite.scale = Vector2.ONE
+		modulate = Color.WHITE
 
 
 func interact(by: Node) -> void:
@@ -73,7 +96,27 @@ func _on_interact(by: Node) -> void:
 				)
 			AudioManager.sfx_pickup()
 			call_deferred("queue_free")
-		## toast 已在 try_add_material 内处理满格/超重
+	elif drop_type == DropType.CORE:
+		if not by.has_method("try_add_core"):
+			return
+		var result: String = by.try_add_core(drop_id, drop_count)
+		if result == "ok":
+			if by.has_method("show_toast"):
+				var key := "pickup.core_skill" if CrystalCatalog.is_skill(drop_id) else "pickup.core_attr"
+				if not Loc.has_key(key):
+					key = "pickup.core"
+				by.show_toast(
+					Loc.t(key, [CrystalCatalog.display_with_tier(drop_id), drop_count]),
+					PitEventLog.Category.RUNE,
+					CrystalCatalog.tier_color(drop_id)
+				)
+			AudioManager.sfx_pickup()
+			call_deferred("queue_free")
+		elif by.has_method("show_toast"):
+			if result == "full":
+				by.show_toast(Loc.t("bag.full"), PitEventLog.Category.WARN)
+			elif result == "overweight":
+				by.show_toast(Loc.t("bag.overweight"), PitEventLog.Category.WARN)
 	elif drop_type == DropType.RUNE:
 		if not by.has_method("try_add_rune"):
 			return
