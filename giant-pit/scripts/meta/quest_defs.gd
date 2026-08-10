@@ -14,6 +14,7 @@ const QUESTS := {
 		"region": "b",
 		"count": 3,
 		"reward_gold": 30,
+		"reward_xp": 40,
 		"reward_mat": {"mind_shard": 1},
 	},
 	"kill_scale": {
@@ -24,6 +25,7 @@ const QUESTS := {
 		"region": "a",
 		"count": 2,
 		"reward_gold": 40,
+		"reward_xp": 50,
 		"reward_mat": {"mind_shard": 2},
 	},
 	"rescue_beacon": {
@@ -32,6 +34,7 @@ const QUESTS := {
 		"desc_key": "quest.rescue.desc",
 		"region": "c",
 		"reward_gold": 35,
+		"reward_xp": 45,
 		"reward_mat": {"mind_core": 1},
 	},
 }

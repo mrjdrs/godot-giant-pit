@@ -105,9 +105,3 @@ func _refresh_all() -> void:
 		skills_panel.refresh()
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel") and any_open():
-		close_all()
-		if _player != null and is_instance_valid(_player):
-			_player.input_locked = false
-		get_viewport().set_input_as_handled()

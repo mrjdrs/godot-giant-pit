@@ -10,6 +10,8 @@ enum DropType { MATERIAL, RUNE, CORE }
 @export var drop_type: int = DropType.MATERIAL
 @export var drop_id: String = "beast_scale"
 @export var drop_count: int = 1
+@export var drop_grade: int = -1
+@export var drop_quality: int = -1
 
 @onready var sprite: Sprite2D = $Sprite
 
@@ -33,10 +35,12 @@ func _process(delta: float) -> void:
 		sprite.position.y = _base_sprite_y + sin(_bob_t * 4.0) * 2.5
 
 
-func setup(p_type: int, p_id: String, p_count: int = 1) -> void:
+func setup(p_type: int, p_id: String, p_count: int = 1, p_grade: int = -1, p_quality: int = -1) -> void:
 	drop_type = p_type
 	drop_id = p_id
 	drop_count = p_count
+	drop_grade = p_grade
+	drop_quality = p_quality
 	if is_node_ready():
 		_apply_icon()
 
@@ -99,14 +103,14 @@ func _on_interact(by: Node) -> void:
 	elif drop_type == DropType.CORE:
 		if not by.has_method("try_add_core"):
 			return
-		var result: String = by.try_add_core(drop_id, drop_count)
+		var result: String = by.try_add_core(drop_id, drop_count, drop_grade, drop_quality)
 		if result == "ok":
 			if by.has_method("show_toast"):
 				var key := "pickup.core_skill" if CrystalCatalog.is_skill(drop_id) else "pickup.core_attr"
 				if not Loc.has_key(key):
 					key = "pickup.core"
 				by.show_toast(
-					Loc.t(key, [CrystalCatalog.display_with_tier(drop_id), drop_count]),
+					Loc.t(key, [CrystalCatalog.display_with_tier(drop_id, drop_grade, drop_quality), drop_count]),
 					PitEventLog.Category.RUNE,
 					CrystalCatalog.tier_color(drop_id)
 				)

@@ -22,6 +22,7 @@ const GRAVITY := 980.0
 @export var max_poise: float = 30.0
 @export var move_speed: float = 70.0
 @export var contact_damage: float = 8.0
+@export var armor: float = 0.0
 @export var attack_cooldown: float = 1.1
 @export var aggro_range: float = 160.0
 @export var drop_mat_id: String = "glow_moss"
@@ -84,6 +85,7 @@ func configure(def: Dictionary) -> void:
 	max_poise = float(def.get("poise", def.get("max_poise", max_poise)))
 	poise = max_poise
 	contact_damage = float(def.get("dmg", contact_damage))
+	armor = float(def.get("armor", armor))
 	drop_mat_id = str(def.get("drop", drop_mat_id))
 	drop_rune_chance = float(def.get("rune", drop_rune_chance))
 	quest_scale = bool(def.get("quest_scale", quest_scale))
@@ -101,6 +103,9 @@ func configure(def: Dictionary) -> void:
 		add_to_group("floor_boss")
 	elif is_elite:
 		scale = Vector2(1.15, 1.15)
+		_base_scale = scale
+	else:
+		scale = Vector2(0.7, 0.7)
 		_base_scale = scale
 	if not is_boss:
 		_setup_bars()
@@ -387,7 +392,10 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var poise_dmg: float = float(hitbox.get("poise_damage")) if hitbox.get("poise_damage") != null else knock * 0.08
 	var src = hitbox.get("source")
 	var dmg_mult := BREAK_DMG_MULT if _poise_broken else 1.0
-	hp = maxf(hp - raw_dmg * dmg_mult, 0.0)
+	var dmg := raw_dmg * dmg_mult
+	if armor > 0.0 and dmg > 0.0:
+		dmg = maxf(dmg - armor, dmg * 0.35)
+	hp = maxf(hp - dmg, 0.0)
 	_flash = 0.22
 	var dir := 1.0
 	if src is Node2D:

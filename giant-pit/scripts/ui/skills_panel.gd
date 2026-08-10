@@ -309,8 +309,8 @@ func _refresh_detail() -> void:
 			if has_node("Body/RightCol/DetailPanel/DetailIcon"):
 				$Body/RightCol/DetailPanel/DetailIcon.texture = null
 		else:
-			var cost := CrystalCatalog.learn_cost(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.learn_cost(_selected_rune)
-			var req := CrystalCatalog.mind_level_req(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.mind_level_req(_selected_rune)
+			var req := CrystalCatalog.level_req(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.mind_level_req(_selected_rune)
+			var gname := ItemTier.grade_display(CrystalCatalog.grade(_selected_rune)) if CrystalCatalog.has_id(_selected_rune) else ItemTier.grade_display(2)
 			var effect_key := "core.%s.effect" % _selected_rune.trim_prefix("core_")
 			if not Loc.has_key(effect_key):
 				effect_key = "rune.%s.effect" % _selected_rune.trim_prefix("rune_")
@@ -322,9 +322,8 @@ func _refresh_detail() -> void:
 				disp,
 				effect,
 				req,
-				cost,
-				MetaProgress.mind_level,
-				MetaProgress.mind_value,
+				gname,
+				MetaProgress.explorer_level,
 			])
 			if has_node("Body/RightCol/DetailPanel/DetailIcon"):
 				var path := CrystalCatalog.icon_path(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else str(RuneCatalog.DEFS.get(_selected_rune, {}).get("icon", ""))
@@ -336,13 +335,10 @@ func _refresh_detail() -> void:
 	elif has_node("LearnBtn"):
 		learn_btn = $LearnBtn
 	if learn_btn:
-		var req := CrystalCatalog.mind_level_req(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.mind_level_req(_selected_rune)
-		var cost := CrystalCatalog.learn_cost(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.learn_cost(_selected_rune)
-		var can := _hub_mode and _selected_rune != "" \
-			and MetaProgress.mind_level >= req \
-			and MetaProgress.can_afford_mind(cost)
+		var req := CrystalCatalog.level_req(_selected_rune) if CrystalCatalog.has_id(_selected_rune) else RuneCatalog.mind_level_req(_selected_rune)
+		var can := _player != null and _selected_rune != "" and MetaProgress.explorer_level >= req
 		learn_btn.disabled = not can
-		learn_btn.text = Loc.t("skill.learn") if _hub_mode else Loc.t("skill.pit_blocked")
+		learn_btn.text = Loc.t("skill.learn")
 
 
 func _on_rune_pressed(index: int) -> void:
@@ -383,11 +379,8 @@ func _on_slot_clicked(slot_id: String) -> void:
 func _on_learn() -> void:
 	if _selected_rune == "" or _player == null:
 		return
-	if not _hub_mode:
-		_toast(Loc.t("skill.pit_blocked"))
-		return
 	var rid := _selected_rune
-	var r: String = _player.try_learn_rune(rid, true)
+	var r: String = _player.try_learn_rune(rid, _hub_mode)
 	var disp := CrystalCatalog.display_name(rid) if CrystalCatalog.has_id(rid) else RuneCatalog.display_name(rid)
 	match r:
 		"ok":
@@ -397,8 +390,10 @@ func _on_learn() -> void:
 			_selected_rune = ""
 			refresh()
 			learned.emit(rid)
-		"mind_level":
-			_toast(Loc.t("skill.need_level", [CrystalCatalog.mind_level_req(rid) if CrystalCatalog.has_id(rid) else RuneCatalog.mind_level_req(rid)]))
+		"level", "mind_level":
+			_toast(Loc.t("skill.need_level", [CrystalCatalog.level_req(rid) if CrystalCatalog.has_id(rid) else RuneCatalog.mind_level_req(rid)]))
+		"grade":
+			_toast(Loc.t("skill.need_grade", [ItemTier.grade_display(CrystalCatalog.grade(rid)) if CrystalCatalog.has_id(rid) else ""]))
 		"no_mind":
 			_toast(Loc.t("skill.need_mind"))
 		"no_rune":

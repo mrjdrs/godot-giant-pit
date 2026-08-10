@@ -22,6 +22,7 @@ func _ready() -> void:
 		player.side_view = false
 		player.combat_enabled = true
 		MetaProgress.grant_arena_skills()
+		MetaProgress.mind_value = MetaProgress.mind_value_max()
 		if player.has_method("apply_meta_brand"):
 			player.apply_meta_brand("iron")
 	_ensure_skill_bar(player)

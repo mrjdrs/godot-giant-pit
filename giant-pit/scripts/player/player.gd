@@ -7,6 +7,7 @@ const CharacterStatsScript = preload("res://scripts/player/character_stats.gd")
 const SkillBookScript = preload("res://scripts/player/skill_book.gd")
 const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 const ProjectileSceneScript = preload("res://scripts/combat/player_projectile.gd")
+const BladeArcFxScript = preload("res://scripts/combat/blade_arc_fx.gd")
 
 signal hp_changed(current: float, maximum: float)
 signal died
@@ -22,30 +23,44 @@ enum AttackPhase { NONE, LIGHT_WINDUP, LIGHT_ACTIVE, LIGHT_RECOVERY, SKILL_WINDU
 
 const BASE_MOVE_SPEED := 150.0
 const BASE_MAX_HP := 100.0
+const VISUAL_SCALE := 0.7
 const LIGHT_COMBO_MAX := 3
+const EASE_IN := 0
+const EASE_OUT := 1
+const EASE_SMOOTH := 2
+## 三段大刀：横斩 → 回撩 → 重劈。判定贴合刀芒扇面（朝向对齐，不跟刀身自旋）。
 const LIGHT_COMBO := [
 	{
-		"windup": 0.07, "active": 0.10, "recovery": 0.14,
-		"damage": 8.0, "knockback": 130.0, "poise": 10.0,
-		"hit_size": Vector2(38, 22), "hit_offset": Vector2(26, 0),
-		"swing_from": -48.0, "swing_to": 42.0, "lunge": 28.0,
+		"windup": 0.11, "active": 0.13, "recovery": 0.11,
+		"damage": 8.0, "knockback": 90.0, "poise": 8.0,
+		"hit_size": Vector2(28, 20), "hit_offset": Vector2(15, 0),
+		"swing_from": -78.0, "swing_to": 62.0, "lunge": 8.0,
+		"trail_color": Color(0.96, 0.90, 0.70, 1.0), "trail_width": 5.5,
+		"flash_color": Color(1.0, 0.96, 0.78, 0.42), "flash_radius": 28.0,
 	},
 	{
-		"windup": 0.08, "active": 0.11, "recovery": 0.15,
-		"damage": 10.0, "knockback": 150.0, "poise": 12.0,
-		"hit_size": Vector2(34, 36), "hit_offset": Vector2(22, -10),
-		"swing_from": -20.0, "swing_to": 78.0, "lunge": 18.0,
+		"windup": 0.08, "active": 0.12, "recovery": 0.11,
+		"damage": 10.0, "knockback": 105.0, "poise": 10.0,
+		"hit_size": Vector2(26, 22), "hit_offset": Vector2(14, 0),
+		"swing_from": 70.0, "swing_to": -88.0, "lunge": 5.0,
+		"trail_color": Color(0.78, 0.93, 1.0, 1.0), "trail_width": 6.0,
+		"flash_color": Color(0.85, 0.96, 1.0, 0.46), "flash_radius": 28.0,
 	},
 	{
-		"windup": 0.14, "active": 0.13, "recovery": 0.28,
-		"damage": 14.0, "knockback": 220.0, "poise": 16.0,
-		"hit_size": Vector2(44, 34), "hit_offset": Vector2(28, 4),
-		"swing_from": -95.0, "swing_to": 70.0, "lunge": 42.0,
+		"windup": 0.16, "active": 0.15, "recovery": 0.26,
+		"damage": 15.0, "knockback": 150.0, "poise": 14.0,
+		"hit_size": Vector2(32, 22), "hit_offset": Vector2(17, 0),
+		"swing_from": -118.0, "swing_to": 84.0, "lunge": 12.0,
+		"trail_color": Color(1.0, 0.78, 0.36, 1.0), "trail_width": 7.5,
+		"flash_color": Color(1.0, 0.84, 0.42, 0.55), "flash_radius": 32.0,
+		"impact": true,
 	},
 ]
 const BLADE_ART_OFFSET_DEG := 90.0
 const DASH_SPEED := 420.0
 const DASH_DURATION := 0.16
+const MIND_REGEN_DELAY := 3.0
+const MIND_REGEN_BASE := 2.0
 const SKILL_ACTION := {
 	"rmb": "attack_heavy",
 	"q": "skill_q",
@@ -75,6 +90,13 @@ var _attack_kb: float = 260.0 ## 技能默认击退，普攻读 combo 表
 var _attack_reach: float = 1.0
 var _combo_def: Dictionary = {}
 var _light_buffered: bool = false
+var _swing_from: float = 0.0
+var _swing_to: float = 0.0
+var _swing_dur: float = 0.0
+var _swing_elapsed: float = 0.0
+var _swing_ease: int = EASE_SMOOTH
+var _blade_fx: Node2D = null
+var _ghost_cd: float = 0.0
 var _pending_skill: String = ""
 var _pending_skill_slot: String = ""
 var _skill_cd: Dictionary = {}
@@ -99,6 +121,8 @@ var _pending_lifesteal: float = 0.0
 var _camera_shake: float = 0.0
 var _camera_origin: Vector2 = Vector2.ZERO
 var _locked_skill_slot: String = ""
+var _out_combat_t: float = 0.0
+var _mind_regen_acc: float = 0.0
 
 ## 俯视扩展（兼容旧场景赋值）
 var side_view: bool = false
@@ -124,6 +148,8 @@ func _ready() -> void:
 	hitbox.disable()
 	_set_hitbox_size(Vector2(28, 22), Vector2(22, -4))
 	_load_textures()
+	_apply_visual_scale()
+	_setup_blade_fx()
 	_apply_blade_visual()
 	if has_node("Camera2D"):
 		_camera_origin = $Camera2D.offset
@@ -134,6 +160,25 @@ func _ready() -> void:
 	_refresh_character_stats(false)
 	_refresh_metal_load()
 	hp_changed.emit(hp, max_hp)
+
+
+func _apply_visual_scale() -> void:
+	var s := Vector2(VISUAL_SCALE, VISUAL_SCALE)
+	if sprite:
+		sprite.scale = s
+	if blade_sprite:
+		blade_sprite.scale = s
+		blade_sprite.position = Vector2(10, 0)
+
+
+func _setup_blade_fx() -> void:
+	if _blade_fx != null or blade_pivot == null:
+		return
+	_blade_fx = Node2D.new()
+	_blade_fx.set_script(BladeArcFxScript)
+	_blade_fx.name = "BladeArcFx"
+	blade_pivot.add_child(_blade_fx)
+	blade_sprite.z_index = 10
 
 
 func _load_textures() -> void:
@@ -162,6 +207,7 @@ func _physics_process(delta: float) -> void:
 
 	_tick_skill_cds(delta)
 	_tick_attack(delta)
+	_tick_mind_regen(delta)
 
 	match state:
 		State.IDLE, State.MOVE:
@@ -179,6 +225,27 @@ func _physics_process(delta: float) -> void:
 func _tick_skill_cds(delta: float) -> void:
 	for k in _skill_cd.keys():
 		_skill_cd[k] = maxf(float(_skill_cd[k]) - delta, 0.0)
+
+
+func _tick_mind_regen(delta: float) -> void:
+	var in_combat := state == State.ATTACK_LIGHT or state == State.ATTACK_SKILL or state == State.DASH or _hurt_flash > 0.0
+	if in_combat:
+		_out_combat_t = 0.0
+		_mind_regen_acc = 0.0
+		return
+	_out_combat_t += delta
+	if _out_combat_t < MIND_REGEN_DELAY:
+		return
+	if MetaProgress.mind_value >= MetaProgress.mind_value_max():
+		return
+	var rate: float = MIND_REGEN_BASE + float(stats.spirit) * 0.15
+	_mind_regen_acc += rate * delta
+	var pts := int(_mind_regen_acc)
+	if pts <= 0:
+		return
+	_mind_regen_acc -= float(pts)
+	MetaProgress.restore_mind_value(pts, false)
+	GameBus.pub("mind_changed", {"current": MetaProgress.mind_value, "max": MetaProgress.mind_value_max()})
 
 
 func _tick_camera_shake(delta: float) -> void:
@@ -210,7 +277,7 @@ func _handle_combat_input() -> void:
 		return
 	if state == State.ATTACK_LIGHT:
 		if Input.is_action_just_pressed("attack_light") and combo_step < LIGHT_COMBO_MAX:
-			if _attack_phase in [AttackPhase.LIGHT_ACTIVE, AttackPhase.LIGHT_RECOVERY]:
+			if _attack_phase in [AttackPhase.LIGHT_WINDUP, AttackPhase.LIGHT_ACTIVE, AttackPhase.LIGHT_RECOVERY]:
 				_light_buffered = true
 		return
 	if state == State.ATTACK_SKILL:
@@ -242,7 +309,18 @@ func _process_free_move(_delta: float) -> void:
 
 func _process_attack_move(_delta: float) -> void:
 	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	velocity = input_dir * _move_speed() * 0.28
+	var lunge_spd := 0.0
+	if not _combo_def.is_empty():
+		var lunge := float(_combo_def.get("lunge", 0.0))
+		if _attack_phase == AttackPhase.LIGHT_WINDUP:
+			lunge_spd = lunge * 0.28
+		elif _attack_phase == AttackPhase.LIGHT_ACTIVE:
+			var active_dur := maxf(float(_combo_def.get("active", 0.12)) / _attack_spd, 0.001)
+			var u := 1.0 - clampf(_attack_timer / active_dur, 0.0, 1.0)
+			lunge_spd = lunge * (1.0 - u * 0.72)
+		elif _attack_phase == AttackPhase.SKILL_ACTIVE:
+			lunge_spd = 18.0
+	velocity = facing * lunge_spd + input_dir * _move_speed() * 0.18
 	facing = attack_locked_facing
 
 
@@ -333,9 +411,29 @@ func set_erosion_locked_slot(slot: String) -> void:
 	_locked_skill_slot = slot
 
 
+func set_camera_limits(left: float, top: float, right: float, bottom: float) -> void:
+	if not has_node("Camera2D"):
+		return
+	var cam: Camera2D = $Camera2D
+	cam.limit_enabled = true
+	cam.limit_left = int(left)
+	cam.limit_top = int(top)
+	cam.limit_right = int(right)
+	cam.limit_bottom = int(bottom)
+	cam.limit_smoothed = false
+
+
 func _update_visuals() -> void:
 	blade_pivot.rotation = facing.angle()
 	sprite.flip_h = facing.x < 0.0
+	if state != State.ATTACK_LIGHT and state != State.ATTACK_SKILL:
+		if absf(blade_swing_deg) > 0.6:
+			blade_swing_deg = lerpf(blade_swing_deg, 0.0, 0.28)
+		else:
+			blade_swing_deg = 0.0
+		sprite.rotation = lerp_angle(sprite.rotation, 0.0, 0.28)
+		sprite.scale = sprite.scale.lerp(Vector2(VISUAL_SCALE, VISUAL_SCALE), 0.28)
+		hitbox.rotation = 0.0
 	_apply_blade_visual()
 	_apply_pose_texture()
 
@@ -351,6 +449,39 @@ func _apply_pose_texture() -> void:
 func _apply_blade_visual() -> void:
 	blade_sprite.rotation_degrees = BLADE_ART_OFFSET_DEG + blade_swing_deg
 	blade_sprite.visible = state != State.DASH
+	if state == State.ATTACK_LIGHT and _attack_phase == AttackPhase.LIGHT_ACTIVE:
+		var u := 1.0
+		if _swing_dur > 0.001:
+			u = clampf(_swing_elapsed / _swing_dur, 0.0, 1.0)
+		var glow := 1.0 + 0.48 * sin(u * PI)
+		blade_sprite.modulate = Color(glow, glow * 0.94, 0.72 + 0.28 * glow, 1.0)
+	elif state == State.ATTACK_SKILL and _attack_phase == AttackPhase.SKILL_ACTIVE:
+		blade_sprite.modulate = Color(1.28, 1.12, 0.82, 1.0)
+	else:
+		blade_sprite.modulate = Color.WHITE
+	_apply_attack_pose()
+
+
+func _apply_attack_pose() -> void:
+	if state != State.ATTACK_LIGHT and state != State.ATTACK_SKILL:
+		return
+	var squash := 0.0
+	var rot_k := 0.11
+	if _attack_phase == AttackPhase.LIGHT_WINDUP or _attack_phase == AttackPhase.SKILL_WINDUP:
+		squash = -0.07
+		rot_k = 0.07
+	elif _attack_phase == AttackPhase.LIGHT_ACTIVE:
+		squash = 0.09 if combo_step < 3 else 0.14
+		rot_k = 0.14
+	elif _attack_phase == AttackPhase.SKILL_ACTIVE:
+		squash = 0.10
+		rot_k = 0.12
+	var target_rot := deg_to_rad(blade_swing_deg * rot_k)
+	sprite.rotation = lerp_angle(sprite.rotation, target_rot, 0.42)
+	sprite.scale = sprite.scale.lerp(
+		Vector2(VISUAL_SCALE * (1.0 + squash), VISUAL_SCALE * (1.0 - squash * 0.55)),
+		0.38
+	)
 
 
 func _face_mouse() -> void:
@@ -379,9 +510,8 @@ func _start_light_attack(_lock_facing: Vector2 = Vector2.ZERO) -> void:
 	var hit_size: Vector2 = _combo_def["hit_size"] * _attack_reach
 	var hit_off: Vector2 = _combo_def["hit_offset"] * _attack_reach
 	_set_hitbox_size(hit_size, hit_off)
-	blade_swing_deg = float(_combo_def["swing_from"])
+	_begin_blade_swing(blade_swing_deg, float(_combo_def["swing_from"]), windup, EASE_OUT)
 	_apply_blade_visual()
-	velocity = facing * float(_combo_def.get("lunge", 0.0))
 	_attack_phase = AttackPhase.LIGHT_WINDUP
 	_attack_timer = windup
 
@@ -393,25 +523,27 @@ func _try_cast_slot(slot: String) -> void:
 	var core_id := skill_in_slot(slot)
 	if core_id == "":
 		if slot == "rmb":
-			_cast_default_heavy()
+			show_toast(Loc.t("skill.slot_empty"), 2)
 		return
 	if float(_skill_cd.get(slot, 0.0)) > 0.0:
+		return
+	if not _try_spend_cast_mind(core_id):
 		return
 	_cast_skill(slot, core_id)
 
 
-func _cast_default_heavy() -> void:
-	_face_mouse()
-	attack_locked_facing = facing
-	_pending_skill = "core_s_quake"
-	_pending_skill_slot = "rmb"
-	state = State.ATTACK_SKILL
-	_attack_reach = float(_brand_stats().get("reach", 1.0))
-	_set_hitbox_size(Vector2(48, 30) * _attack_reach, Vector2(30, 0) * _attack_reach)
-	blade_swing_deg = -75.0
-	_attack_phase = AttackPhase.SKILL_WINDUP
-	_attack_timer = 0.28
-	loud_skill_used.emit("heavy")
+func _try_spend_cast_mind(core_id: String) -> bool:
+	var cost := CrystalCatalog.cast_cost(core_id)
+	if cost <= 0:
+		return true
+	if not MetaProgress.can_afford_mind(cost):
+		show_toast(Loc.t("toast.no_mind"), 2)
+		return false
+	MetaProgress.consume_mind_value(cost, false)
+	GameBus.pub("mind_changed", {"current": MetaProgress.mind_value, "max": MetaProgress.mind_value_max()})
+	GameBus.pub("skill_cast", {"skill_id": core_id, "loud": CrystalCatalog.is_loud(core_id)})
+	_out_combat_t = 0.0
+	return true
 
 
 func _cast_skill(slot: String, core_id: String) -> void:
@@ -431,6 +563,7 @@ func _cast_skill(slot: String, core_id: String) -> void:
 		windup = 0.12
 	elif core_id == "core_s_bolt":
 		windup = 0.10
+	_begin_blade_swing(blade_swing_deg, -62.0, windup, EASE_OUT)
 	_attack_phase = AttackPhase.SKILL_WINDUP
 	_attack_timer = windup
 	if CrystalCatalog.is_loud(core_id):
@@ -446,9 +579,85 @@ func _start_dash() -> void:
 	AudioManager.sfx_roll()
 
 
+func _begin_blade_swing(from_deg: float, to_deg: float, duration: float, ease_kind: int) -> void:
+	_swing_from = from_deg
+	_swing_to = to_deg
+	_swing_dur = maxf(duration, 0.001)
+	_swing_elapsed = 0.0
+	_swing_ease = ease_kind
+	blade_swing_deg = from_deg
+
+
+func _ease_t(t: float, kind: int) -> float:
+	var x := clampf(t, 0.0, 1.0)
+	match kind:
+		EASE_IN:
+			return x * x * x
+		EASE_OUT:
+			return 1.0 - pow(1.0 - x, 3.0)
+		_:
+			return x * x * (3.0 - 2.0 * x)
+
+
+func _update_blade_swing(delta: float) -> void:
+	if _swing_dur <= 0.0:
+		return
+	_swing_elapsed = minf(_swing_elapsed + delta, _swing_dur)
+	var t := _ease_t(_swing_elapsed / _swing_dur, _swing_ease)
+	blade_swing_deg = lerpf(_swing_from, _swing_to, t)
+	_apply_blade_visual()
+	if _attack_phase == AttackPhase.LIGHT_ACTIVE:
+		## 朝向对齐，覆盖刀芒扇面；不跟刀身自旋，避免画面砍到却判空。
+		hitbox.rotation = 0.0
+		_sample_blade_trail(delta)
+	elif _attack_phase == AttackPhase.SKILL_ACTIVE:
+		hitbox.rotation = deg_to_rad(blade_swing_deg)
+		_sample_blade_trail(delta)
+	else:
+		hitbox.rotation = lerpf(hitbox.rotation, 0.0, 0.35)
+
+
+func _sample_blade_trail(delta: float) -> void:
+	if _blade_fx == null:
+		return
+	var tip_g: Vector2 = blade_sprite.to_global(Vector2(0.0, -20.0))
+	if _blade_fx.has_method("push_tip_local"):
+		_blade_fx.push_tip_local(_blade_fx.to_local(tip_g))
+	_ghost_cd -= delta
+	if _ghost_cd > 0.0:
+		return
+	_ghost_cd = 0.028
+	if _blade_fx.has_method("spawn_ghost"):
+		_blade_fx.spawn_ghost(
+			blade_sprite.texture,
+			blade_sprite.position,
+			blade_sprite.rotation,
+			Color(1.0, 0.95, 0.82, 0.38)
+		)
+
+
+func _start_light_slash_fx() -> void:
+	if _blade_fx == null or not _blade_fx.has_method("begin_slash"):
+		return
+	var trail_col: Color = _combo_def.get("trail_color", Color(0.95, 0.9, 0.72, 1.0))
+	var flash_col: Color = _combo_def.get("flash_color", Color(1.0, 0.95, 0.78, 0.42))
+	var width := float(_combo_def.get("trail_width", 10.0))
+	var radius := float(_combo_def.get("flash_radius", 46.0)) * _attack_reach
+	_blade_fx.begin_slash(
+		trail_col,
+		width,
+		float(_combo_def["swing_from"]),
+		float(_combo_def["swing_to"]),
+		radius,
+		flash_col
+	)
+	_ghost_cd = 0.0
+
+
 func _tick_attack(delta: float) -> void:
 	if _attack_phase == AttackPhase.NONE:
 		return
+	_update_blade_swing(delta)
 	_attack_timer -= delta
 	if _attack_timer > 0.0:
 		return
@@ -458,31 +667,44 @@ func _tick_attack(delta: float) -> void:
 			var kb: float = float(_combo_def["knockback"])
 			var poise: float = float(_combo_def.get("poise", kb * 0.08))
 			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
-			blade_swing_deg = float(_combo_def["swing_to"])
-			_apply_blade_visual()
+			var active_dur: float = float(_combo_def["active"]) / _attack_spd
+			_begin_blade_swing(float(_combo_def["swing_from"]), float(_combo_def["swing_to"]), active_dur, EASE_IN)
+			_start_light_slash_fx()
 			_attack_phase = AttackPhase.LIGHT_ACTIVE
-			_attack_timer = float(_combo_def["active"]) / _attack_spd
+			_attack_timer = active_dur
 			AudioManager.sfx_weapon_attack(weapon_family)
+			if bool(_combo_def.get("impact", false)):
+				_camera_shake = maxf(_camera_shake, 0.10)
 		AttackPhase.LIGHT_ACTIVE:
 			hitbox.disable()
+			hitbox.rotation = 0.0
+			if _blade_fx and _blade_fx.has_method("end_slash"):
+				_blade_fx.end_slash()
+			var rec: float = float(_combo_def.get("recovery", 0.16)) / _attack_spd
+			_begin_blade_swing(blade_swing_deg, blade_swing_deg * 0.72, rec, EASE_OUT)
 			_attack_phase = AttackPhase.LIGHT_RECOVERY
-			_attack_timer = float(_combo_def.get("recovery", 0.16)) / _attack_spd
+			_attack_timer = rec
 		AttackPhase.LIGHT_RECOVERY:
 			if _light_buffered and combo_step < LIGHT_COMBO_MAX:
 				_light_buffered = false
-				combo_window = 0.35
+				combo_window = 0.38
 				_start_light_attack()
 			else:
 				_finish_attack_to_idle()
-				combo_window = 0.18 if combo_step >= LIGHT_COMBO_MAX else 0.32
+				combo_window = 0.18 if combo_step >= LIGHT_COMBO_MAX else 0.34
 				if combo_step >= LIGHT_COMBO_MAX:
 					combo_step = 0
 		AttackPhase.SKILL_WINDUP:
 			_fire_pending_skill()
+			_begin_blade_swing(blade_swing_deg, 70.0, 0.12, EASE_IN)
 			_attack_phase = AttackPhase.SKILL_ACTIVE
 			_attack_timer = 0.12
 		AttackPhase.SKILL_ACTIVE:
 			hitbox.disable()
+			hitbox.rotation = 0.0
+			if _blade_fx and _blade_fx.has_method("end_slash"):
+				_blade_fx.end_slash()
+			_begin_blade_swing(blade_swing_deg, 0.0, 0.18, EASE_OUT)
 			_attack_phase = AttackPhase.SKILL_RECOVERY
 			_attack_timer = 0.18
 		AttackPhase.SKILL_RECOVERY:
@@ -521,7 +743,11 @@ func _fire_pending_skill() -> void:
 				extra *= 1.1
 			_set_hitbox_size(Vector2(52, 36) * _attack_reach, Vector2(32, 0) * _attack_reach)
 			hitbox.enable(_roll_attack_damage(22.0 * extra * _damage_mult() * patk_m), _attack_kb, self, 22.0)
-	blade_swing_deg = 60.0
+	if _blade_fx and _blade_fx.has_method("begin_slash"):
+		_blade_fx.begin_slash(
+			Color(1.0, 0.86, 0.45, 1.0), 12.0, blade_swing_deg, 70.0, 50.0,
+			Color(1.0, 0.88, 0.5, 0.4)
+		)
 	_apply_blade_visual()
 	AudioManager.sfx_weapon_attack(weapon_family)
 	if slot != "" and CrystalCatalog.has_id(core_id):
@@ -541,13 +767,15 @@ func _spawn_bolt(dir: Vector2, dmg: float) -> void:
 
 
 func _finish_attack_to_idle() -> void:
-	blade_swing_deg = 0.0
 	_light_buffered = false
 	_pending_skill = ""
 	_pending_skill_slot = ""
-	_apply_blade_visual()
 	_attack_phase = AttackPhase.NONE
 	_attack_timer = 0.0
+	_swing_dur = 0.0
+	hitbox.rotation = 0.0
+	if _blade_fx and _blade_fx.has_method("end_slash"):
+		_blade_fx.end_slash()
 	if state == State.ATTACK_LIGHT or state == State.ATTACK_SKILL:
 		state = State.IDLE
 
@@ -621,6 +849,7 @@ func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	var mitigated: float = maxf(incoming - stats.pdef, 1.0)
 	hp = maxf(hp - mitigated, 0.0)
 	_hurt_flash = 0.2
+	_out_combat_t = 0.0
 	hp_changed.emit(hp, max_hp)
 	AudioManager.sfx_hurt_player()
 	if from_pos != Vector2.ZERO:
@@ -634,9 +863,12 @@ func _die() -> void:
 	input_locked = true
 	_attack_phase = AttackPhase.NONE
 	_attack_timer = 0.0
+	_swing_dur = 0.0
 	state = State.IDLE
 	velocity = Vector2.ZERO
 	hitbox.disable()
+	if _blade_fx and _blade_fx.has_method("end_slash"):
+		_blade_fx.end_slash()
 	died.emit()
 
 
@@ -658,8 +890,17 @@ func try_add_rune(rune_id: String) -> String:
 	return inventory.add_rune_as_item(rune_id, 1, carry_cap())
 
 
-func try_add_core(core_id: String, count: int = 1) -> String:
-	return inventory.add_core(core_id, count, carry_cap())
+func try_add_core(core_id: String, count: int = 1, grade: int = -1, quality: int = -1) -> String:
+	return inventory.add_core(core_id, count, carry_cap(), grade, quality)
+
+
+func try_add_item(item_id: String, count: int = 1) -> String:
+	var r := inventory.add_item(item_id, count, carry_cap())
+	if r == "full":
+		show_toast(Loc.t("bag.full"), 2)
+	elif r == "overweight":
+		show_toast(Loc.t("bag.overweight"), 2)
+	return r
 
 
 func try_learn_rune(core_id: String, from_stash: bool = false) -> String:

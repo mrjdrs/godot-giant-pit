@@ -135,5 +135,7 @@ static func sell_price(mat_id: String) -> int:
 			return 40
 		ItemTier.Tier.LEGENDARY:
 			return 50
+		ItemTier.Tier.MYTHIC:
+			return 70
 		_:
 			return 5

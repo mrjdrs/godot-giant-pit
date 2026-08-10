@@ -20,6 +20,7 @@ const DistressScene = preload("res://scenes/pit/distress_beacon.tscn")
 const ResourceScene = preload("res://scenes/pit/resource_node.tscn")
 const WarpScene = preload("res://scenes/pit/warp_beacon.tscn")
 const SheetHostScript = preload("res://scripts/ui/character_sheet_host.gd")
+const PauseMenuScript = preload("res://scripts/ui/pause_menu.gd")
 
 @onready var world: Node2D = $World
 @onready var rooms_root: Node2D = $World/Rooms
@@ -40,7 +41,6 @@ var _fog_chunks: Dictionary = {} ## Vector2i -> ColorRect/Polygon
 var _warps: Dictionary = {} ## warp_id -> node
 var _current_region: String = ""
 var _run_over: bool = false
-var _death_selected: int = -1
 var _death_wired: bool = false
 var _quest_open: bool = false
 var _warp_menu_from: String = ""
@@ -50,12 +50,21 @@ var erosion = ErosionSystem.new()
 var biome_rules: BiomeRules
 var _atmosphere: Node2D
 var _skill_bar: Control
+var _elite_a_dead: bool = false
+var _secret_door_ix: Node = null
 
 
 func _ready() -> void:
 	add_to_group("pit_floor")
-	if not RunSession.active:
+	if RunSession.returning_from_secret:
+		if not RunSession.active:
+			RunSession.active = true
+	elif not RunSession.active:
 		RunSession.begin_run()
+	else:
+		## 重入坑却仍挂着上局 active：清探索迷雾，避免整图已亮。
+		RunSession.explored_chunks.clear()
+		RunSession.returning_from_secret = false
 	extract_ui.visible = false
 	death_ui.visible = false
 	if hud.has_node("QuestPanel"):
@@ -65,6 +74,7 @@ func _ready() -> void:
 	if hud.has_node("RegionBanner"):
 		hud.get_node("RegionBanner").modulate.a = 0.0
 	_ensure_sheet_host()
+	PauseMenuScript.install(self)
 	biome_rules = BiomeRulesScript.new()
 	add_child(biome_rules)
 	biome_rules.reinforcement_requested.connect(_on_reinforcement)
@@ -142,13 +152,33 @@ func _build_floor_level() -> void:
 	_explored_chunks.clear()
 	_warps.clear()
 	_current_region = ""
-	_map = Floor1Generator.generate(0)
+	if not RunSession.returning_from_secret:
+		RunSession.explored_chunks.clear()
+	if RunSession.floor_seed == 0:
+		RunSession.floor_seed = randi()
+		if RunSession.floor_seed == 0:
+			RunSession.floor_seed = 1
+	_map = Floor1Generator.generate(RunSession.floor_seed)
 	_walkable = _map.get("walkable", {})
 	_region_of = _map.get("region_of", {})
 	_markers = _map.get("markers", {})
 	_build_terrain()
 	_build_chunk_fog()
 	_spawn_player()
+	var returning := RunSession.returning_from_secret
+	if returning:
+		_elite_a_dead = RunSession.elite_a_dead
+		erosion.set_value(RunSession.erosion_value, true)
+		RunSession.restore_explorer(player)
+		if RunSession.pit_return_pos != Vector2.ZERO:
+			player.global_position = RunSession.pit_return_pos + Vector2(40, 24)
+		for ck in RunSession.explored_chunks.keys():
+			var p: Vector2i = ck if ck is Vector2i else Vector2i(int(ck.x), int(ck.y))
+			_reveal_chunk(p)
+		RunSession.returning_from_secret = false
+	else:
+		_transfer_stash_supplies()
+	_apply_camera_limits()
 	_spawn_contents()
 	_setup_hud()
 	_setup_minimap()
@@ -219,15 +249,15 @@ func _build_terrain() -> void:
 		cs.z_index = -3
 		ground.add_child(cs)
 
-	## 墙：不可走邻接。碰撞合并到单个 StaticBody2D + 矩形合并，避免上千独立刚体。
+	## 墙视觉：只画紧贴可行走格的一圈。碰撞：图内所有不可走格 + 外框，防止走出地图。
 	var dirs := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
-	var wall_done: Dictionary = {}
+	var wall_visual_tiles: Dictionary = {}
 	for g in _walkable.keys():
 		for d in dirs:
 			var n: Vector2i = g + d
 			if _walkable.has(n):
 				continue
-			wall_done[n] = true
+			wall_visual_tiles[n] = true
 	var wall_body := StaticBody2D.new()
 	wall_body.name = "WallCollision"
 	wall_body.collision_layer = 1
@@ -237,9 +267,8 @@ func _build_terrain() -> void:
 	wall_visuals.name = "WallVisuals"
 	walls.add_child(wall_visuals)
 	var wall_tex_cache: Dictionary = {}
-	for n in wall_done.keys():
+	for n in wall_visual_tiles.keys():
 		var rid2 := str(_region_of.get(n, _region_of.get(n + Vector2i.LEFT, RegionCatalog.REGION_A)))
-		## Prefer region of an adjacent walkable tile for texture choice.
 		for d2 in dirs:
 			var neighbor: Vector2i = n + d2
 			if _walkable.has(neighbor):
@@ -247,7 +276,9 @@ func _build_terrain() -> void:
 				break
 		var wpath: String = str(RegionCatalog.WALL_TILES.get(rid2, "res://assets/tiles/pit_wall/tile_wall.png"))
 		_make_wall_visual(wall_visuals, n, tile, wpath, wall_tex_cache)
-	var merged_rects: Array = _merge_wall_rects(wall_done.keys())
+	var map_w := int(_map.get("map_w", Floor1Generator.MAP_W))
+	var map_h := int(_map.get("map_h", Floor1Generator.MAP_H))
+	var merged_rects: Array = _void_collision_rects(map_w, map_h)
 	for rect_i in merged_rects:
 		var r: Rect2i = rect_i
 		var shape := CollisionShape2D.new()
@@ -258,31 +289,19 @@ func _build_terrain() -> void:
 		wall_body.add_child(shape)
 
 
-func _merge_wall_rects(tiles: Array) -> Array:
-	## Greedy row-span merge, then vertical merge of identical spans.
-	var by_y: Dictionary = {}
-	for t in tiles:
-		var p: Vector2i = t
-		if not by_y.has(p.y):
-			by_y[p.y] = []
-		by_y[p.y].append(p.x)
-	var row_spans: Array = [] ## {y, x0, x1} inclusive
-	var ys: Array = by_y.keys()
-	ys.sort()
-	for y in ys:
-		var xs: Array = by_y[y]
-		xs.sort()
-		var start: int = xs[0]
-		var prev: int = xs[0]
-		for i in range(1, xs.size()):
-			var x: int = xs[i]
-			if x == prev + 1:
-				prev = x
+func _void_collision_rects(map_w: int, map_h: int) -> Array:
+	## 图内不可走格按行合并，再加一圈外框，角色无法走进虚空。
+	var row_spans: Array = []
+	for y in map_h:
+		var x := 0
+		while x < map_w:
+			if _walkable.has(Vector2i(x, y)):
+				x += 1
 				continue
-			row_spans.append({"y": y, "x0": start, "x1": prev})
-			start = x
-			prev = x
-		row_spans.append({"y": y, "x0": start, "x1": prev})
+			var x0 := x
+			while x < map_w and not _walkable.has(Vector2i(x, y)):
+				x += 1
+			row_spans.append({"y": y, "x0": x0, "x1": x - 1})
 	var used: Dictionary = {}
 	var out: Array = []
 	for i in row_spans.size():
@@ -308,6 +327,10 @@ func _merge_wall_rects(tiles: Array) -> Array:
 					grow = true
 					break
 		out.append(Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1))
+	out.append(Rect2i(-2, -2, map_w + 4, 2))
+	out.append(Rect2i(-2, map_h, map_w + 4, 2))
+	out.append(Rect2i(-2, 0, 2, map_h))
+	out.append(Rect2i(map_w, 0, 2, map_h))
 	return out
 
 
@@ -326,6 +349,7 @@ func _build_chunk_fog() -> void:
 	for c in fog_root.get_children():
 		c.queue_free()
 	_fog_chunks.clear()
+	fog_root.z_index = 40
 	var tile: int = int(_map.get("tile", 32))
 	var chunk: int = int(_map.get("chunk", 8))
 	var seen: Dictionary = {}
@@ -336,7 +360,7 @@ func _build_chunk_fog() -> void:
 		seen[ck] = true
 		var poly := Polygon2D.new()
 		poly.color = Color(0.04, 0.03, 0.05, 0.92)
-		poly.z_index = 20
+		poly.z_index = 40
 		var origin := Vector2(ck.x * chunk * tile, ck.y * chunk * tile)
 		var sz := float(chunk * tile)
 		poly.position = origin
@@ -364,11 +388,14 @@ func _spawn_player() -> void:
 		player.loud_skill_used.connect(_on_loud_skill)
 	_atmosphere = AtmosphereScript.install(world, self, "moss", 0.22, false)
 	_reveal_around(player.global_position)
+	if not RunSession.returning_from_secret and player.has_method("show_toast"):
+		player.show_toast(Loc.t("toast.extract_hint"), PitEventLog.Category.SYSTEM)
 
 
 func _spawn_contents() -> void:
 	## 撤离 / 下层 / BOSS
-	_spawn_extract(_markers.get("extract", Vector2.ZERO))
+	for rid in [RegionCatalog.REGION_A, RegionCatalog.REGION_B, RegionCatalog.REGION_C]:
+		_spawn_extract(_markers.get("extract_%s" % rid, Vector2.ZERO))
 	_spawn_descent(_markers.get("descent", Vector2.ZERO))
 	_spawn_boss(_markers.get("boss", Vector2.ZERO))
 
@@ -386,12 +413,15 @@ func _spawn_contents() -> void:
 			_spawn_enemy_at(p, {
 				"id": "a_scale",
 				"icon": "res://assets/enemies/region_a/enemy_a_scale_rock.png",
-				"hp": 42.0,
-				"dmg": 8.0,
+				"hp": 60.0,
+				"dmg": 10.0,
+				"armor": 4.0,
 				"drop": "beast_scale",
 				"rune": 0.4,
 				"quest_scale": true,
 			})
+
+	_spawn_secret_realm()
 
 
 func _spawn_extract(pos: Vector2) -> void:
@@ -427,13 +457,21 @@ func _spawn_boss(pos: Vector2) -> void:
 
 
 func _spawn_elite(rid: String) -> void:
+	if rid == RegionCatalog.REGION_A and _elite_a_dead:
+		return
 	var def: Dictionary = RegionCatalog.ELITES[rid].duplicate()
 	_spawn_enemy_at(_markers.get("elite_%s" % rid, Vector2.ZERO), def)
 
 
 func _spawn_warp_and_guard(rid: String) -> void:
-	var warp_id := "warp_%s" % rid
+	for wid in RegionCatalog.warps_of_region(rid):
+		_spawn_one_warp(str(wid))
+
+
+func _spawn_one_warp(warp_id: String) -> void:
 	var pos: Vector2 = _markers.get(warp_id, Vector2.ZERO)
+	if pos == Vector2.ZERO:
+		return
 	var warp := WarpScene.instantiate()
 	entities.add_child(warp)
 	warp.global_position = pos
@@ -443,8 +481,9 @@ func _spawn_warp_and_guard(rid: String) -> void:
 	if RunSession.is_warp_active(warp_id):
 		warp.set_activated(true)
 	else:
-		var gdef: Dictionary = RegionCatalog.GUARDS[warp_id].duplicate()
-		_spawn_enemy_at(pos + Vector2(36, 0), gdef)
+		var gdef: Dictionary = RegionCatalog.guard_def(warp_id)
+		if not gdef.is_empty():
+			_spawn_enemy_at(pos + Vector2(36, 0), gdef)
 
 
 func _spawn_region_resources(rid: String) -> void:
@@ -473,6 +512,92 @@ func _spawn_enemy_at(pos: Vector2, def: Dictionary) -> void:
 		e.died_with_id.connect(_on_enemy_killed)
 
 
+func _spawn_secret_realm() -> void:
+	if not _markers.has("secret_mouth"):
+		return
+	var pos: Vector2 = _markers.get("secret_mouth", Vector2.ZERO)
+	var hole := Polygon2D.new()
+	hole.name = "SecretHole"
+	hole.z_index = -1
+	hole.color = Color(0.03, 0.05, 0.04, 1)
+	var pts: PackedVector2Array = PackedVector2Array()
+	for i in 14:
+		var a := TAU * float(i) / 14.0
+		pts.append(Vector2(cos(a) * 20.0, sin(a) * 14.0))
+	hole.polygon = pts
+	rooms_root.add_child(hole)
+	hole.global_position = pos
+
+	var mouth := Area2D.new()
+	mouth.set_script(preload("res://scripts/pit/secret_door.gd"))
+	var dshape := CollisionShape2D.new()
+	var circ := CircleShape2D.new()
+	circ.radius = 22.0
+	dshape.shape = circ
+	mouth.add_child(dshape)
+	var spr := Sprite2D.new()
+	spr.name = "Sprite"
+	if ResourceLoader.exists("res://assets/tiles/hub/hub_pit_mouth.png"):
+		spr.texture = load("res://assets/tiles/hub/hub_pit_mouth.png")
+		spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	mouth.add_child(spr)
+	entities.add_child(mouth)
+	mouth.global_position = pos
+	_secret_door_ix = mouth
+	if mouth.has_signal("enter_requested") and not mouth.enter_requested.is_connected(_on_secret_mouth):
+		mouth.enter_requested.connect(_on_secret_mouth)
+
+
+func _can_open_secret() -> bool:
+	if _elite_a_dead:
+		return true
+	if player and player.inventory != null and player.inventory.has_method("count_id"):
+		if player.inventory.count_id("mire_pearl") > 0:
+			return true
+	return MetaProgress.stash_count("mire_pearl") > 0
+
+
+func _on_secret_mouth(by: Node) -> void:
+	if not _can_open_secret():
+		if by != null and by.has_method("show_toast"):
+			by.show_toast(Loc.t("secret.need_condition"), PitEventLog.Category.WARN)
+		return
+	if by != null and by.has_method("show_toast"):
+		by.show_toast(Loc.t("secret.opened"), PitEventLog.Category.SYSTEM)
+	RunSession.snapshot_explorer(player, _explored_chunks, _elite_a_dead, erosion.value)
+	GameBus.pub("secret_opened", {"id": "secret_a"})
+	get_tree().change_scene_to_file("res://scenes/pit/secret_mire.tscn")
+
+
+func apply_erosion_salve(amount: float = 25.0) -> void:
+	erosion.set_value(erosion.value - amount)
+
+
+func _transfer_stash_supplies() -> void:
+	if player == null or player.inventory == null:
+		return
+	for id in ["item_mind_potion", "item_erosion_salve", "item_erosion_ward", "item_bag_expand"]:
+		var n := MetaProgress.stash_count(id)
+		if n <= 0:
+			continue
+		for _i in n:
+			if not MetaProgress.consume_stash({id: 1}):
+				break
+			var r: String = player.inventory.add_item(id, 1, player.carry_cap())
+			if r != "ok":
+				MetaProgress.add_stash(id, 1)
+				break
+
+
+func _apply_camera_limits() -> void:
+	if player == null or not player.has_method("set_camera_limits"):
+		return
+	var tile := int(_map.get("tile", 32))
+	var mw := int(_map.get("map_w", Floor1Generator.MAP_W))
+	var mh := int(_map.get("map_h", Floor1Generator.MAP_H))
+	player.set_camera_limits(0.0, 0.0, float(mw * tile), float(mh * tile))
+
+
 func _spawn_resource(pos: Vector2, mat_id: String, prompt: String, icon: String) -> void:
 	var node := ResourceScene.instantiate()
 	entities.add_child(node)
@@ -487,9 +612,10 @@ func on_warp_guard_killed(warp_id: String) -> void:
 		_warps[warp_id].set_activated(true)
 	if player:
 		player.show_toast(
-			Loc.t("warp.unlocked", [Loc.t("warp.%s" % warp_id)]),
+			Loc.t("warp.unlocked", [RegionCatalog.warp_display_name(warp_id)]),
 			PitEventLog.Category.SYSTEM
 		)
+	_setup_minimap()
 
 
 func _on_enemy_killed(enemy_id: String, meta: Dictionary) -> void:
@@ -498,8 +624,10 @@ func _on_enemy_killed(enemy_id: String, meta: Dictionary) -> void:
 	var category := PitEventLog.Category.KILL
 	if bool(meta.get("is_boss", false)):
 		text = Loc.t("feed.kill_boss", [display])
-	elif enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
+	elif enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_") or enemy_id.begins_with("special_"):
 		text = Loc.t("feed.kill_elite", [display])
+	if enemy_id == "elite_a":
+		_elite_a_dead = true
 	_push_feed(text, category)
 	_update_quest_hud()
 
@@ -528,16 +656,17 @@ func _reveal_around(pos: Vector2) -> void:
 
 
 func _reveal_chunk(ck: Vector2i) -> void:
+	var key := Vector2i(ck.x, ck.y)
 	var max_cx := ceili(float(Floor1Generator.MAP_W) / float(Floor1Generator.CHUNK))
 	var max_cy := ceili(float(Floor1Generator.MAP_H) / float(Floor1Generator.CHUNK))
-	if ck.x < 0 or ck.y < 0 or ck.x >= max_cx or ck.y >= max_cy:
+	if key.x < 0 or key.y < 0 or key.x >= max_cx or key.y >= max_cy:
 		return
-	if _explored_chunks.has(ck):
+	if _explored_chunks.has(key):
 		return
-	_explored_chunks[ck] = true
-	if _fog_chunks.has(ck):
-		var fog: Polygon2D = _fog_chunks[ck]
-		_fog_chunks.erase(ck)
+	_explored_chunks[key] = true
+	if _fog_chunks.has(key):
+		var fog: Polygon2D = _fog_chunks[key]
+		_fog_chunks.erase(key)
 		if is_instance_valid(fog):
 			fog.queue_free()
 	_minimap_dirty = true
@@ -722,13 +851,13 @@ func _on_warp_menu(from_id: String, _by: Node) -> void:
 	var afford := MetaProgress.can_afford_mind(cost)
 	if hud.has_node("WarpPanel/Hint"):
 		hud.get_node("WarpPanel/Hint").text = Loc.t("warp.menu_hint", [cost, MetaProgress.mind_value])
-	for wid in ["warp_a", "warp_b", "warp_c"]:
+	for wid in RegionCatalog.ALL_WARPS:
 		if wid == from_id:
 			continue
 		if not RunSession.is_warp_active(wid):
 			continue
 		var b := Button.new()
-		b.text = Loc.t("warp.travel_to", [Loc.t("warp.%s" % wid)])
+		b.text = Loc.t("warp.travel_to", [RegionCatalog.warp_display_name(wid)])
 		b.disabled = not afford
 		var captured: String = str(wid)
 		b.pressed.connect(func(): _confirm_warp_travel(captured))
@@ -751,12 +880,12 @@ func _confirm_warp_travel(to_id: String) -> void:
 		_minimap_dirty = true
 		_last_minimap_tile = Vector2i(-99999, -99999)
 		_flush_minimap_if_needed(Floor1Generator.world_to_tile(player.global_position))
-		player.show_toast(Loc.t("warp.traveled", [Loc.t("warp.%s" % to_id)]), PitEventLog.Category.SYSTEM)
+		player.show_toast(Loc.t("warp.traveled", [RegionCatalog.warp_display_name(to_id)]), PitEventLog.Category.SYSTEM)
 	_close_warp_menu()
 
 
 func _warp_to_other(from_id: String) -> void:
-	for wid in ["warp_a", "warp_b", "warp_c"]:
+	for wid in RegionCatalog.ALL_WARPS:
 		if wid == from_id:
 			continue
 		if RunSession.is_warp_active(wid):
@@ -778,6 +907,13 @@ func _setup_minimap() -> void:
 	var mm = hud.get_node("Minimap")
 	if mm.has_method("setup_floor1"):
 		mm.setup_floor1(_map, _explored_chunks)
+	if mm.has_method("set_poi_flags"):
+		var flags := {
+			"distress": RunSession.quest_id_snapshot == "rescue_beacon",
+		}
+		for wid in RegionCatalog.ALL_WARPS:
+			flags[wid] = RunSession.is_warp_active(wid)
+		mm.set_poi_flags(flags)
 	_refresh_minimap()
 
 
@@ -795,10 +931,8 @@ func _refresh_minimap() -> void:
 func _update_hud() -> void:
 	if player == null:
 		return
-	var mind_txt: String = Loc.t("hud.mind", [MetaProgress.mind_level])
-	var value_txt: String = Loc.t("hud.mind_value", [MetaProgress.mind_value])
 	var special_txt: String = Loc.t("hud.special_mind_yes") if RunSession.special_mind else Loc.t("hud.special_mind_no")
-	var mind_line := "%s | %s | %s" % [mind_txt, value_txt, special_txt]
+	var mind_line := "%s | %s" % [Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]), special_txt]
 	if _skill_bar:
 		if _skill_bar.has_method("set_vitals"):
 			_skill_bar.set_vitals(player.hp, player.max_hp)
@@ -806,7 +940,9 @@ func _update_hud() -> void:
 			_skill_bar.set_erosion(erosion.value, ErosionSystem.MAX_VALUE, erosion.tier)
 		if _skill_bar.has_method("set_xp"):
 			_skill_bar.set_xp(MetaProgress.explorer_level, MetaProgress.explorer_xp, MetaProgress.xp_to_next_level())
-		if _skill_bar.has_method("set_mind_line"):
+		if _skill_bar.has_method("set_mind"):
+			_skill_bar.set_mind(MetaProgress.mind_value, MetaProgress.mind_value_max())
+		elif _skill_bar.has_method("set_mind_line"):
 			_skill_bar.set_mind_line(mind_line)
 	if hud.has_node("StatsBar/HpBarBg/HpBarFill"):
 		var fill: ColorRect = hud.get_node("StatsBar/HpBarBg/HpBarFill")
@@ -928,7 +1064,7 @@ func _on_extract(_by: Node) -> void:
 
 
 func _on_player_died() -> void:
-	_show_death_keep()
+	_show_death_return()
 
 
 func _on_toast(text: String, category: int = PitEventLog.Category.SYSTEM, color: Color = Color.TRANSPARENT) -> void:
@@ -963,7 +1099,7 @@ func _finish_success() -> void:
 	var mats: PackedStringArray = player.inventory.describe_contents()
 	lines.append_array(mats if not mats.is_empty() else PackedStringArray([Loc.t("extract.empty")]))
 	lines.append("")
-	lines.append(Loc.t("extract.brand_lost"))
+	lines.append(Loc.t("extract.skills_kept"))
 	if RunSession.special_mind:
 		lines.append(Loc.t("extract.special_mind_lost"))
 	if q == "ok":
@@ -982,51 +1118,36 @@ func _wire_death_ui() -> void:
 	if not death_ui.has_node("Panel/ConfirmButton"):
 		return
 	_death_wired = true
-	death_ui.get_node("Panel/ConfirmButton").text = Loc.t("extract.confirm_keep")
-	death_ui.get_node("Panel/ConfirmButton").pressed.connect(_confirm_death_keep)
+	death_ui.get_node("Panel/ConfirmButton").text = Loc.t("extract.back_hub")
+	death_ui.get_node("Panel/ConfirmButton").pressed.connect(_confirm_death_return)
 	if death_ui.has_node("Panel/DeathGrid"):
 		var grid = death_ui.get_node("Panel/DeathGrid")
-		if grid.has_signal("slot_pressed"):
-			grid.slot_pressed.connect(_select_death_slot)
 		if grid.has_signal("slot_hovered") and not grid.slot_hovered.is_connected(_on_death_hover):
 			grid.slot_hovered.connect(_on_death_hover)
 	if extract_ui.has_node("Panel/RetryButton"):
 		extract_ui.get_node("Panel/RetryButton").pressed.connect(_back_to_hub)
 
 
-func _show_death_keep() -> void:
+func _show_death_return() -> void:
 	if _run_over:
 		return
 	_run_over = true
 	MetaProgress.apply_death_wear()
-	if RunSession.quest_id_snapshot != "":
-		MetaProgress.fail_quest()
-	death_ui.visible = true
-	death_ui.get_node("Panel/Title").text = Loc.t("extract.fail_title")
-	death_ui.get_node("Panel/Hint").text = Loc.t("extract.keep_one")
-	_death_selected = -1
-	if death_ui.has_node("Panel/Tooltip"):
-		death_ui.get_node("Panel/Tooltip").text = ""
-	if death_ui.has_node("Panel/DeathGrid") and player:
-		var grid = death_ui.get_node("Panel/DeathGrid")
-		if grid.has_method("set_inventory_entries"):
-			grid.set_inventory_entries(player.inventory.slots)
-			if grid.get("selectable") != null:
-				grid.selectable = true
-
-
-func _select_death_slot(index: int) -> void:
-	_death_selected = index
-
-
-func _confirm_death_keep() -> void:
-	var kept: Array = []
-	if player and _death_selected >= 0 and _death_selected < player.inventory.slots.size():
-		kept.append(player.inventory.slots[_death_selected].duplicate(true))
-	MetaProgress.merge_inventory_into_stash(kept)
 	if player:
+		MetaProgress.merge_inventory_into_stash(player.inventory.slots)
 		player.inventory.clear()
 	RunSession.clear()
+	death_ui.visible = true
+	death_ui.get_node("Panel/Title").text = Loc.t("extract.fail_title")
+	if death_ui.has_node("Panel/Hint"):
+		death_ui.get_node("Panel/Hint").text = Loc.t("extract.death_keep_all")
+	if death_ui.has_node("Panel/Tooltip"):
+		death_ui.get_node("Panel/Tooltip").text = Loc.t("extract.death_wear")
+	if death_ui.has_node("Panel/DeathGrid"):
+		death_ui.get_node("Panel/DeathGrid").visible = false
+
+
+func _confirm_death_return() -> void:
 	_back_to_hub()
 
 

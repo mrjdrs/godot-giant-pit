@@ -16,6 +16,7 @@ const NAME_KEYS := {
 	"elite_a": "enemy.elite_a",
 	"elite_b": "enemy.elite_b",
 	"elite_c": "enemy.elite_c",
+	"special_a": "enemy.special_a",
 	"guard_a": "enemy.guard_a",
 	"guard_b": "enemy.guard_b",
 	"guard_c": "enemy.guard_c",

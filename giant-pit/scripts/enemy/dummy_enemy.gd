@@ -14,6 +14,8 @@ var knockback_velocity: Vector2 = Vector2.ZERO
 func _ready() -> void:
 	collision_layer = 4
 	collision_mask = 1
+	if sprite:
+		sprite.scale = Vector2(0.7, 0.7)
 	hurtbox.configure_layers(16)
 	hurtbox.hurt.connect(_on_hurt)
 	_update_hp_label()

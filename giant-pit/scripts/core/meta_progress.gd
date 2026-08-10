@@ -1,19 +1,30 @@
 extends Node
-## 局外进度唯一真源。user://meta_save.json
+## 局外进度唯一真源。五档独立存档 user://saves/slot_1..5.json
 
 const Equipment = preload("res://scripts/meta/equipment.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
 
-const SAVE_PATH := "user://meta_save.json"
+const SLOT_COUNT := 5
+const SAVES_DIR := "user://saves"
+const INDEX_PATH := "user://saves/index.json"
+const LEGACY_SAVE_PATH := "user://meta_save.json"
+const SAVE_PATH := "user://meta_save.json" ## 旧单档，仅迁移用
 
 signal changed
 
-var mind_level: int = 1
+var active_slot: int = -1
+var last_slot: int = -1
+
+var mind_level: int = 1 ## 旧存档兼容；门槛已改探索等级
 var mind_shards_banked: int = 0 ## 静室待吸收也可直接扣 stash
-var mind_value: int = 0 ## 可消耗念力值（传送 / 学符文）
+var mind_value: int = 0 ## 放技能 / 传送消耗
 var gold: int = 0
+var imprint_family: String = "cold_blade"
+var attr_allocated: Dictionary = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
+var unspent_points: int = 0
+var quest_kill_progress: int = 0
 var stash: Dictionary = {} ## id -> count（材料 / 未学符文 / 特殊道具）
 var equipment: Dictionary = {}
 var learned_runes: Dictionary = {} ## 旧存档兼容；新进度用 learned_skills
@@ -36,12 +47,18 @@ var breath_interval_days: int = 3
 const WARP_COST_ENTER := 15
 const WARP_COST_TRAVEL := 10
 const MIND_VALUE_BASE := 40
-const MIND_VALUE_PER_LEVEL := 10
+const MIND_VALUE_PER_INT := 4
+const MIND_VALUE_PER_LEVEL := 2
+const POINTS_PER_LEVEL := 3
+const ATTR_KEYS := ["str", "vit", "agi", "int", "spi", "luk"]
 const PAPER_FACE_VALUE := 100 ## 换出时标价（金币→券）
 const VOUCHER_SPEND_VALUE := 99 ## 购买/兑回时 1 张金币券折合金币
 const GOLD_TO_PAPER_COST := 100
 const MIND_POTION_PRICE := 200
 const MIND_POTION_RESTORE := 30
+const EROSION_SALVE_PRICE := 80
+const EROSION_SALVE_HEAL := 25.0
+const EROSION_WARD_PRICE := 150
 const WINCH_UPGRADE_COST := {"alchem_slag": 3, "beast_scale": 2}
 const SPOTLIGHT_UPGRADE_COST := {"glow_moss": 2, "mind_shard": 2}
 const AWAKEN_WHIRL_COST := {"mat_whirl_edge": 2, "glow_moss": 3}
@@ -49,7 +66,24 @@ const AWAKEN_IRON_COST := {"mat_iron_guard": 2, "alchem_slag": 3}
 
 
 func mind_value_max() -> int:
-	return MIND_VALUE_BASE + mind_level * MIND_VALUE_PER_LEVEL
+	var int_pts := int(attr_allocated.get("int", 0))
+	return MIND_VALUE_BASE + int_pts * MIND_VALUE_PER_INT + explorer_level * MIND_VALUE_PER_LEVEL
+
+
+func attr_value(key: String) -> int:
+	return int(attr_allocated.get(key, 0))
+
+
+func spend_attr_point(key: String) -> String:
+	if unspent_points <= 0:
+		return "none"
+	if not ATTR_KEYS.has(key):
+		return "bad"
+	attr_allocated[key] = int(attr_allocated.get(key, 0)) + 1
+	unspent_points -= 1
+	changed.emit()
+	save_game()
+	return "ok"
 
 
 func has_learned(rune_id: String) -> bool:
@@ -89,9 +123,12 @@ func grant_xp(amount: int) -> int:
 	while explorer_level < 30 and explorer_xp >= xp_to_next_level():
 		explorer_xp -= xp_to_next_level()
 		explorer_level += 1
+		unspent_points += POINTS_PER_LEVEL
 		gained += 1
 	changed.emit()
 	save_game()
+	if Engine.get_main_loop() != null and Engine.get_main_loop().root != null:
+		GameBus.pub("xp_gained", {"amount": amount, "levels": gained})
 	return gained
 
 
@@ -146,30 +183,27 @@ func try_comprehend(core_id: String, inventory = null, from_stash: bool = false)
 	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 	if not CrystalCatalog.has_id(core_id):
 		return "unknown"
-	if mind_level < CrystalCatalog.mind_level_req(core_id):
-		return "mind_level"
+	if explorer_level < CrystalCatalog.level_req(core_id):
+		return "level"
+	var need_grade := CrystalCatalog.grade(core_id)
 	var already := skill_rank(core_id)
-	var cost := CrystalCatalog.learn_cost(core_id)
-	if already > 0:
-		cost += already * 10
-	if not can_afford_mind(cost):
-		return "no_mind"
 	if from_stash:
 		if stash_count(core_id) < 1:
 			return "no_rune"
+		if CrystalCatalog.grade(core_id) < need_grade:
+			return "grade"
 		if not consume_stash({core_id: 1}):
 			return "no_rune"
 	else:
-		if inventory == null or not inventory.has_method("consume_core"):
+		if inventory == null:
 			return "no_rune"
-		if not inventory.consume_core(core_id):
+		if inventory.has_method("consume_core_min_grade"):
+			if not inventory.consume_core_min_grade(core_id, need_grade):
+				if inventory.has_method("find_core_index") and inventory.find_core_index(core_id) >= 0:
+					return "grade"
+				return "no_rune"
+		elif not inventory.has_method("consume_core") or not inventory.consume_core(core_id):
 			return "no_rune"
-	if not consume_mind_value(cost):
-		if from_stash:
-			add_stash(core_id, 1)
-		elif inventory != null and inventory.has_method("add_core"):
-			inventory.add_core(core_id, 1)
-		return "no_mind"
 	learned_skills[core_id] = already + 1
 	learned_runes[core_id] = true
 	if CrystalCatalog.is_active(core_id) and already == 0:
@@ -218,8 +252,6 @@ func grant_arena_skills() -> void:
 		learned_skills["core_s_quake"] = 1
 	if not has_learned_skill("core_s_bolt"):
 		learned_skills["core_s_bolt"] = 1
-	if str(skill_loadout.get("rmb", "")) == "":
-		skill_loadout["rmb"] = "core_s_quake"
 	if str(skill_loadout.get("q", "")) == "":
 		skill_loadout["q"] = "core_s_bolt"
 	changed.emit()
@@ -297,12 +329,13 @@ func try_awaken(branch: String) -> String:
 	return "ok"
 
 
-func restore_mind_value(amount: int) -> int:
+func restore_mind_value(amount: int, persist: bool = true) -> int:
 	var before := mind_value
 	mind_value = mini(mind_value + amount, mind_value_max())
 	if mind_value != before:
 		changed.emit()
-		save_game()
+		if persist:
+			save_game()
 	return mind_value - before
 
 
@@ -376,6 +409,24 @@ func buy_mind_potion(count: int = 1) -> String:
 	return "ok"
 
 
+func buy_erosion_salve(count: int = 1) -> String:
+	var cost := EROSION_SALVE_PRICE * count
+	var r := try_spend_gold(cost)
+	if r != "ok":
+		return r
+	add_stash("item_erosion_salve", count)
+	return "ok"
+
+
+func buy_erosion_ward(count: int = 1) -> String:
+	var cost := EROSION_WARD_PRICE * count
+	var r := try_spend_gold(cost)
+	if r != "ok":
+		return r
+	add_stash("item_erosion_ward", count)
+	return "ok"
+
+
 func sell_stash_material(mat_id: String, count: int = 1) -> String:
 	if not MaterialCatalog.MATERIALS.has(mat_id):
 		return "unknown"
@@ -391,8 +442,18 @@ func sell_stash_material(mat_id: String, count: int = 1) -> String:
 
 
 func _ready() -> void:
+	_ensure_saves_dir()
+	_migrate_legacy_save()
+	_load_index()
 	_ensure_equipment()
-	load_game()
+
+
+func add_gold(amount: int) -> void:
+	if amount == 0:
+		return
+	gold = maxi(0, gold + amount)
+	changed.emit()
+	save_game()
 
 
 func _ensure_equipment() -> void:
@@ -400,6 +461,8 @@ func _ensure_equipment() -> void:
 		equipment[Equipment.SLOT_CHEST] = Equipment.make_default_slot(Equipment.SLOT_CHEST)
 	if not equipment.has(Equipment.SLOT_AMULET):
 		equipment[Equipment.SLOT_AMULET] = Equipment.make_default_slot(Equipment.SLOT_AMULET)
+	Equipment.ensure_fields(equipment[Equipment.SLOT_CHEST])
+	Equipment.ensure_fields(equipment[Equipment.SLOT_AMULET])
 
 
 func stash_count(mat_id: String) -> int:
@@ -502,6 +565,8 @@ func try_craft(slot: String) -> String:
 	data["owned"] = true
 	data["upgrade"] = 0
 	data["wear"] = 0
+	data["grade"] = int(data.get("grade", 2))
+	data["quality"] = int(data.get("quality", ItemTier.Tier.COMMON))
 	changed.emit()
 	save_game()
 	return "ok"
@@ -556,14 +621,15 @@ func can_afford_mind(n: int) -> bool:
 	return mind_value >= n
 
 
-func consume_mind_value(n: int) -> bool:
+func consume_mind_value(n: int, persist: bool = true) -> bool:
 	if n <= 0:
 		return true
 	if mind_value < n:
 		return false
 	mind_value -= n
 	changed.emit()
-	save_game()
+	if persist:
+		save_game()
 	return true
 
 
@@ -618,7 +684,7 @@ func complete_quest_if_able(run_stats: Dictionary) -> String:
 					have += int(entry.get("count", 0))
 			ok = have >= need_n
 		QuestDefs.TYPE_KILL:
-			ok = int(run_stats.get("kill_scale", 0)) >= int(def.get("count", 1))
+			ok = maxi(int(run_stats.get("kill_scale", 0)), quest_kill_progress) >= int(def.get("count", 1))
 		QuestDefs.TYPE_RESCUE:
 			ok = bool(run_stats.get("rescue_done", false))
 	if not ok:
@@ -627,6 +693,10 @@ func complete_quest_if_able(run_stats: Dictionary) -> String:
 	var reward_mat: Dictionary = def.get("reward_mat", {})
 	for mid in reward_mat.keys():
 		add_stash(str(mid), int(reward_mat[mid]))
+	var xp_reward := int(def.get("reward_xp", 0))
+	if xp_reward > 0:
+		grant_xp(xp_reward)
+	quest_kill_progress = 0
 	active_quest_id = ""
 	changed.emit()
 	save_game()
@@ -634,7 +704,7 @@ func complete_quest_if_able(run_stats: Dictionary) -> String:
 
 
 func apply_death_wear() -> void:
-	if mind_level <= 2:
+	if explorer_level <= 2:
 		return
 	_ensure_equipment()
 	Equipment.apply_death_wear(equipment[Equipment.SLOT_CHEST])
@@ -673,6 +743,8 @@ func describe_stash() -> PackedStringArray:
 
 func to_dict() -> Dictionary:
 	return {
+		"saved_at": Time.get_datetime_string_from_system(false, true),
+		"saved_unix": Time.get_unix_time_from_system(),
 		"mind_level": mind_level,
 		"mind_value": mind_value,
 		"gold": gold,
@@ -692,6 +764,10 @@ func to_dict() -> Dictionary:
 		"winch_level": winch_level,
 		"spotlight_level": spotlight_level,
 		"awakening_branch": awakening_branch,
+		"imprint_family": imprint_family,
+		"attr_allocated": attr_allocated.duplicate(),
+		"unspent_points": unspent_points,
+		"quest_kill_progress": quest_kill_progress,
 	}
 
 
@@ -728,36 +804,234 @@ func from_dict(data: Dictionary) -> void:
 	winch_level = int(data.get("winch_level", 0))
 	spotlight_level = int(data.get("spotlight_level", 0))
 	awakening_branch = str(data.get("awakening_branch", ""))
+	imprint_family = str(data.get("imprint_family", "cold_blade"))
+	if imprint_family == "":
+		imprint_family = "cold_blade"
+	attr_allocated = data.get("attr_allocated", {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0})
+	if typeof(attr_allocated) != TYPE_DICTIONARY:
+		attr_allocated = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
+	for k in ATTR_KEYS:
+		if not attr_allocated.has(k):
+			attr_allocated[k] = 0
+	unspent_points = maxi(0, int(data.get("unspent_points", 0)))
+	quest_kill_progress = maxi(0, int(data.get("quest_kill_progress", 0)))
 	_ensure_equipment()
 
 
+func slot_path(slot: int) -> String:
+	return "%s/slot_%d.json" % [SAVES_DIR, slot]
+
+
+func is_valid_slot(slot: int) -> bool:
+	return slot >= 1 and slot <= SLOT_COUNT
+
+
+func is_slot_empty(slot: int) -> bool:
+	if not is_valid_slot(slot):
+		return true
+	return not FileAccess.file_exists(slot_path(slot))
+
+
+func has_any_save() -> bool:
+	for i in range(1, SLOT_COUNT + 1):
+		if not is_slot_empty(i):
+			return true
+	return false
+
+
+func last_played_slot() -> int:
+	if is_valid_slot(last_slot) and not is_slot_empty(last_slot):
+		return last_slot
+	var best := -1
+	var best_t := -1.0
+	for i in range(1, SLOT_COUNT + 1):
+		var info := slot_summary(i)
+		if bool(info.get("empty", true)):
+			continue
+		var t := float(info.get("saved_unix", 0.0))
+		if t >= best_t:
+			best_t = t
+			best = i
+	return best
+
+
+func slot_summary(slot: int) -> Dictionary:
+	if not is_valid_slot(slot) or is_slot_empty(slot):
+		return {"slot": slot, "empty": true}
+	var f := FileAccess.open(slot_path(slot), FileAccess.READ)
+	if f == null:
+		return {"slot": slot, "empty": true}
+	var parsed = JSON.parse_string(f.get_as_text())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {"slot": slot, "empty": true}
+	var d: Dictionary = parsed
+	return {
+		"slot": slot,
+		"empty": false,
+		"game_day": int(d.get("game_day", 1)),
+		"explorer_level": maxi(1, int(d.get("explorer_level", 1))),
+		"gold": int(d.get("gold", 0)),
+		"saved_at": str(d.get("saved_at", "")),
+		"saved_unix": float(d.get("saved_unix", 0.0)),
+	}
+
+
+func reset_progress(with_starter: bool = true) -> void:
+	mind_level = 1
+	mind_shards_banked = 0
+	mind_value = 0
+	gold = 0
+	imprint_family = "cold_blade"
+	attr_allocated = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
+	unspent_points = 0
+	quest_kill_progress = 0
+	stash = {}
+	equipment = {}
+	learned_runes = {}
+	learned_skills = {}
+	skill_loadout = {"rmb": "", "q": "", "e": "", "r": "", "f": "", "c": ""}
+	explorer_xp = 0
+	explorer_level = 1
+	active_quest_id = ""
+	intel = PackedStringArray()
+	unlocked_warps = []
+	game_day = 1
+	entered_pit_today = false
+	unlocked_shortcuts = []
+	winch_level = 0
+	spotlight_level = 0
+	awakening_branch = ""
+	_ensure_equipment()
+	if with_starter:
+		stash = {
+			"mind_shard": 4,
+			"mind_core": 1,
+			"alchem_slag": 4,
+			"beast_scale": 3,
+			"glow_moss": 2,
+			"core_s_chain": 1,
+			"item_bag_expand": 1,
+		}
+		mind_value = mind_value_max()
+
+
+func new_game(slot: int) -> bool:
+	if not is_valid_slot(slot):
+		return false
+	active_slot = slot
+	last_slot = slot
+	reset_progress(true)
+	save_game()
+	_save_index()
+	changed.emit()
+	return true
+
+
+func load_slot(slot: int) -> bool:
+	if not is_valid_slot(slot) or is_slot_empty(slot):
+		return false
+	var f := FileAccess.open(slot_path(slot), FileAccess.READ)
+	if f == null:
+		return false
+	var parsed = JSON.parse_string(f.get_as_text())
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return false
+	from_dict(parsed)
+	active_slot = slot
+	last_slot = slot
+	_save_index()
+	changed.emit()
+	return true
+
+
+func delete_slot(slot: int) -> bool:
+	if not is_valid_slot(slot):
+		return false
+	var path := slot_path(slot)
+	var dir := DirAccess.open(SAVES_DIR)
+	if dir != null and FileAccess.file_exists(path):
+		dir.remove("slot_%d.json" % slot)
+	if active_slot == slot:
+		active_slot = -1
+		reset_progress(false)
+	if last_slot == slot:
+		last_slot = last_played_slot()
+	_save_index()
+	changed.emit()
+	return true
+
+
+func ensure_session_loaded() -> bool:
+	if is_valid_slot(active_slot) and not is_slot_empty(active_slot):
+		return true
+	var s := last_played_slot()
+	if s >= 1:
+		return load_slot(s)
+	return false
+
+
 func save_game() -> void:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if not is_valid_slot(active_slot):
+		return
+	_ensure_saves_dir()
+	var f := FileAccess.open(slot_path(active_slot), FileAccess.WRITE)
 	if f == null:
 		return
 	f.store_string(JSON.stringify(to_dict(), "\t"))
+	last_slot = active_slot
+	_save_index()
 
 
 func load_game() -> void:
-	if not FileAccess.file_exists(SAVE_PATH):
-		_ensure_equipment()
-		## 新手赠礼，方便阶段 C 试玩
-		if stash.is_empty():
-			stash = {
-				"mind_shard": 4,
-				"mind_core": 1,
-				"alchem_slag": 4,
-				"beast_scale": 3,
-				"glow_moss": 2,
-				"core_s_chain": 1,
-				"item_bag_expand": 1,
-			}
-			mind_value = mind_value_max()
+	## 兼容旧调用：若已有活动档则重载，否则尝试最近一档。
+	if is_valid_slot(active_slot):
+		load_slot(active_slot)
 		return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var s := last_played_slot()
+	if s >= 1:
+		load_slot(s)
+
+
+func _ensure_saves_dir() -> void:
+	var d := DirAccess.open("user://")
+	if d == null:
+		return
+	if not d.dir_exists("saves"):
+		d.make_dir_recursive("saves")
+
+
+func _load_index() -> void:
+	if not FileAccess.file_exists(INDEX_PATH):
+		return
+	var f := FileAccess.open(INDEX_PATH, FileAccess.READ)
 	if f == null:
 		return
 	var parsed = JSON.parse_string(f.get_as_text())
-	if typeof(parsed) == TYPE_DICTIONARY:
-		from_dict(parsed)
-	changed.emit()
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return
+	last_slot = int(parsed.get("last_slot", -1))
+
+
+func _save_index() -> void:
+	_ensure_saves_dir()
+	var f := FileAccess.open(INDEX_PATH, FileAccess.WRITE)
+	if f == null:
+		return
+	f.store_string(JSON.stringify({"last_slot": last_slot}, "\t"))
+
+
+func _migrate_legacy_save() -> void:
+	if not FileAccess.file_exists(LEGACY_SAVE_PATH):
+		return
+	if not is_slot_empty(1):
+		return
+	var src := FileAccess.open(LEGACY_SAVE_PATH, FileAccess.READ)
+	if src == null:
+		return
+	_ensure_saves_dir()
+	var dst := FileAccess.open(slot_path(1), FileAccess.WRITE)
+	if dst == null:
+		return
+	dst.store_string(src.get_as_text())
+	last_slot = 1
+	_save_index()

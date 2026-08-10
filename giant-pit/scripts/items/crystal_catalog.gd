@@ -1,5 +1,5 @@
 extends RefCounted
-## 晶核：技能 / 属性。仅营地感悟可学习。
+## 晶核：技能 / 属性。学习看角色等级 + 品阶；释放耗念力。
 
 enum CoreKind { SKILL, ATTR }
 
@@ -10,7 +10,10 @@ const DEFS := {
 		"name_key": "core.s_chain",
 		"icon": "res://assets/runes/rune_s_chain.png",
 		"mind_level_req": 1,
+		"level_req": 1,
+		"grade": 2,
 		"learn_cost": 20,
+		"cast_cost": 0,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"loud": false,
@@ -22,7 +25,10 @@ const DEFS := {
 		"name_key": "core.s_quake",
 		"icon": "res://assets/runes/rune_s_quake.png",
 		"mind_level_req": 2,
+		"level_req": 5,
+		"grade": 4,
 		"learn_cost": 35,
+		"cast_cost": 16,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"loud": true,
@@ -35,7 +41,10 @@ const DEFS := {
 		"name_key": "core.s_dash",
 		"icon": "res://assets/runes/rune_s_cloudstep.png",
 		"mind_level_req": 1,
+		"level_req": 1,
+		"grade": 2,
 		"learn_cost": 20,
+		"cast_cost": 10,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"loud": false,
@@ -48,7 +57,10 @@ const DEFS := {
 		"name_key": "core.s_bolt",
 		"icon": "res://assets/runes/rune_s_ironwall.png",
 		"mind_level_req": 2,
+		"level_req": 5,
+		"grade": 4,
 		"learn_cost": 35,
+		"cast_cost": 18,
 		"weight": 1.5,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"loud": false,
@@ -61,7 +73,10 @@ const DEFS := {
 		"name_key": "core.s_whirl",
 		"icon": "res://assets/brands/brand_copper.png",
 		"mind_level_req": 3,
+		"level_req": 10,
+		"grade": 6,
 		"learn_cost": 50,
+		"cast_cost": 32,
 		"weight": 1.8,
 		"tier": ItemTier.Tier.RARE,
 		"loud": true,
@@ -74,7 +89,10 @@ const DEFS := {
 		"name_key": "core.s_smash",
 		"icon": "res://assets/brands/brand_gold.png",
 		"mind_level_req": 3,
+		"level_req": 10,
+		"grade": 6,
 		"learn_cost": 50,
+		"cast_cost": 48,
 		"weight": 2.0,
 		"tier": ItemTier.Tier.EPIC,
 		"loud": true,
@@ -87,7 +105,10 @@ const DEFS := {
 		"name_key": "core.a_toughbone",
 		"icon": "res://assets/runes/rune_a_toughbone.png",
 		"mind_level_req": 1,
+		"level_req": 1,
+		"grade": 2,
 		"learn_cost": 20,
+		"cast_cost": 0,
 		"weight": 1.0,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"stat_bonuses": {"vitality": 3.0, "max_hp": 15.0},
@@ -98,7 +119,10 @@ const DEFS := {
 		"name_key": "core.a_heavyarm",
 		"icon": "res://assets/runes/rune_a_heavyarm.png",
 		"mind_level_req": 1,
+		"level_req": 1,
+		"grade": 2,
 		"learn_cost": 20,
+		"cast_cost": 0,
 		"weight": 1.0,
 		"tier": ItemTier.Tier.UNCOMMON,
 		"stat_bonuses": {"strength": 3.0, "patk": 4.0},
@@ -109,7 +133,10 @@ const DEFS := {
 		"name_key": "core.a_sharpeye",
 		"icon": "res://assets/runes/rune_a_sharpeye.png",
 		"mind_level_req": 2,
+		"level_req": 5,
+		"grade": 4,
 		"learn_cost": 35,
+		"cast_cost": 0,
 		"weight": 1.0,
 		"tier": ItemTier.Tier.RARE,
 		"stat_bonuses": {"crit": 0.03},
@@ -120,7 +147,10 @@ const DEFS := {
 		"name_key": "core.a_cruel",
 		"icon": "res://assets/runes/rune_a_cruel.png",
 		"mind_level_req": 2,
+		"level_req": 5,
+		"grade": 4,
 		"learn_cost": 35,
+		"cast_cost": 0,
 		"weight": 1.0,
 		"tier": ItemTier.Tier.RARE,
 		"stat_bonuses": {"critdmg": 0.10},
@@ -142,6 +172,7 @@ const ENEMY_CORE := {
 	"elite_a": "core_s_whirl",
 	"elite_b": "core_s_whirl",
 	"elite_c": "core_s_whirl",
+	"special_a": "core_s_whirl",
 	"guard_a": "core_s_chain",
 	"guard_b": "core_s_dash",
 	"guard_c": "core_s_bolt",
@@ -180,7 +211,42 @@ static func learn_cost(core_id: String) -> int:
 
 
 static func mind_level_req(core_id: String) -> int:
-	return int(def(core_id).get("mind_level_req", 1))
+	## 兼容旧调用；新门槛用 level_req。
+	return level_req(core_id)
+
+
+static func level_req(core_id: String) -> int:
+	return int(def(core_id).get("level_req", def(core_id).get("mind_level_req", 1)))
+
+
+static func grade(core_id: String) -> int:
+	return clampi(int(def(core_id).get("grade", 2)), 1, 9)
+
+
+static func cast_cost(core_id: String) -> int:
+	if core_id == "":
+		return int(def("core_s_quake").get("cast_cost", 16))
+	return int(def(core_id).get("cast_cost", 0))
+
+
+static func skill_drop_chance(enemy_id: String, is_boss: bool = false) -> float:
+	if is_boss or enemy_id == "boss_floor1":
+		return 0.35
+	if enemy_id.begins_with("elite_") or enemy_id.begins_with("special_"):
+		return 0.18 if enemy_id.begins_with("special_") else 0.12
+	if enemy_id.begins_with("guard_"):
+		return 0.08
+	return 0.02
+
+
+static func attr_drop_chance(enemy_id: String, is_boss: bool = false) -> float:
+	if is_boss or enemy_id == "boss_floor1":
+		return 0.20
+	if enemy_id.begins_with("elite_") or enemy_id.begins_with("special_"):
+		return 0.12 if enemy_id.begins_with("special_") else 0.10
+	if enemy_id.begins_with("guard_"):
+		return 0.06
+	return 0.03
 
 
 static func is_skill(core_id: String) -> bool:
@@ -223,8 +289,31 @@ static func tier_color(core_id: String) -> Color:
 	return ItemTier.color_for(tier(core_id))
 
 
-static func display_with_tier(core_id: String) -> String:
-	return Loc.t("item.tier_name", [tier_label(core_id), display_name(core_id)])
+static func display_with_tier(core_id: String, inst_grade: int = -1, inst_quality: int = -1) -> String:
+	var g := inst_grade if inst_grade > 0 else grade(core_id)
+	var q := inst_quality if inst_quality >= 0 else tier(core_id)
+	if Loc.has_key("item.grade_quality_name"):
+		return Loc.t("item.grade_quality_name", [ItemTier.grade_display(g), ItemTier.display_name(q), display_name(core_id)])
+	return Loc.t("item.tier_name", [ItemTier.display_name(q), display_name(core_id)])
+
+
+static func roll_drop_grade(enemy_id: String, is_boss: bool = false) -> int:
+	var base := grade(drop_skill_core(enemy_id, is_boss))
+	if is_boss or enemy_id == "boss_floor1":
+		return ItemTier.clamp_grade(base + randi_range(0, 2))
+	if enemy_id.begins_with("special_"):
+		return ItemTier.clamp_grade(base + randi_range(0, 1))
+	if enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
+		return ItemTier.clamp_grade(base + randi_range(-1, 1))
+	return ItemTier.clamp_grade(mini(base, randi_range(1, 3)))
+
+
+static func roll_drop_quality(enemy_id: String, is_boss: bool = false) -> int:
+	if is_boss or enemy_id == "boss_floor1" or enemy_id.begins_with("special_"):
+		return ItemTier.clamp_tier(randi_range(ItemTier.Tier.UNCOMMON, ItemTier.Tier.RARE))
+	if enemy_id.begins_with("elite_"):
+		return ItemTier.Tier.RARE if randf() < 0.35 else ItemTier.Tier.UNCOMMON
+	return ItemTier.Tier.UNCOMMON if randf() < 0.15 else ItemTier.Tier.COMMON
 
 
 static func drop_skill_core(enemy_id: String, is_boss: bool = false) -> String:
@@ -243,6 +332,8 @@ static func xp_for_kill(enemy_id: String, is_boss: bool = false) -> int:
 		return 48
 	if enemy_id.begins_with("elite_"):
 		return 22
+	if enemy_id.begins_with("special_"):
+		return 28
 	if enemy_id.begins_with("guard_"):
 		return 14
 	return 8

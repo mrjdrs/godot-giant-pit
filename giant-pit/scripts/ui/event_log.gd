@@ -1,11 +1,12 @@
 extends Control
-## 右侧事件日志：近 50 条，裁剪在框内，滚轮翻阅。
+## 右侧事件日志：近 50 条，裁剪在框内，滚轮翻阅；默认贴底跟最新。
 
 class_name PitEventLog
 
 enum Category { KILL, PICKUP, RUNE, SYSTEM, WARN }
 
 const MAX_LINES := 50
+const STICK_SLACK := 28.0
 
 const CATEGORY_COLORS := {
 	Category.KILL: Color(1.0, 0.55, 0.45, 1),
@@ -18,6 +19,7 @@ const CATEGORY_COLORS := {
 var _list: VBoxContainer
 var _scroll: ScrollContainer
 var _stick_to_bottom: bool = true
+var _ignore_scroll_signal: bool = false
 
 
 func _ready() -> void:
@@ -25,7 +27,9 @@ func _ready() -> void:
 	clip_contents = true
 	_ensure_tree()
 	if _scroll:
-		_scroll.get_v_scroll_bar().changed.connect(_on_scroll_changed)
+		var bar := _scroll.get_v_scroll_bar()
+		if not bar.value_changed.is_connected(_on_user_scrolled):
+			bar.value_changed.connect(_on_user_scrolled)
 	_fit_list_width()
 	resized.connect(_fit_list_width)
 
@@ -43,6 +47,7 @@ func _ensure_tree() -> void:
 		_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 		_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+		_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		return
 	_build_fallback()
 
@@ -80,7 +85,6 @@ func _build_fallback() -> void:
 func push(text: String, category: int = Category.SYSTEM, color_override: Color = Color.TRANSPARENT) -> void:
 	if text.strip_edges() == "" or _list == null:
 		return
-	_refresh_stick()
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -98,6 +102,14 @@ func push(text: String, category: int = Category.SYSTEM, color_override: Color =
 		guard += 1
 	if _stick_to_bottom:
 		call_deferred("_scroll_to_latest")
+		if is_inside_tree() and not get_tree().process_frame.is_connected(_scroll_to_latest):
+			get_tree().process_frame.connect(_scroll_to_latest, CONNECT_ONE_SHOT)
+
+
+func _on_user_scrolled(_v: float) -> void:
+	if _ignore_scroll_signal:
+		return
+	_refresh_stick()
 
 
 func _refresh_stick() -> void:
@@ -105,19 +117,18 @@ func _refresh_stick() -> void:
 		_stick_to_bottom = true
 		return
 	var bar := _scroll.get_v_scroll_bar()
-	_stick_to_bottom = (bar.max_value - _scroll.scroll_vertical) < 56.0
-
-
-func _on_scroll_changed() -> void:
-	_refresh_stick()
+	var max_scroll := maxf(0.0, bar.max_value - bar.page)
+	_stick_to_bottom = _scroll.scroll_vertical >= max_scroll - STICK_SLACK
 
 
 func _scroll_to_latest() -> void:
 	if _scroll == null or _list == null or _list.get_child_count() == 0:
 		return
+	_ignore_scroll_signal = true
 	var last: Control = _list.get_child(_list.get_child_count() - 1) as Control
 	if last:
 		_scroll.ensure_control_visible(last)
-	else:
-		var bar := _scroll.get_v_scroll_bar()
-		_scroll.scroll_vertical = int(bar.max_value)
+	var bar := _scroll.get_v_scroll_bar()
+	_scroll.scroll_vertical = int(round(maxf(0.0, bar.max_value - bar.page)))
+	_ignore_scroll_signal = false
+	_stick_to_bottom = true

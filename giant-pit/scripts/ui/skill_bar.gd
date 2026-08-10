@@ -6,7 +6,7 @@ const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 const SLOTS := ["rmb", "q", "e", "r", "f", "c"]
 const LABELS := ["RMB", "Q", "E", "R", "F", "C"]
 const HUD_W := 680.0
-const HUD_H := 154.0
+const HUD_H := 168.0
 const ORB_R := 48.0
 
 var _player: Node = null
@@ -19,6 +19,9 @@ var _erosion_tier: int = 0
 var _xp_bar: ProgressBar
 var _xp_label: Label
 var _mind_text: Label
+var _mind_bar: ProgressBar
+var _mind_cur: int = 0
+var _mind_max: int = 1
 var _hp_text: Label
 var _res_text: Label
 var _status_row: HBoxContainer
@@ -77,6 +80,17 @@ func set_mind_line(text: String) -> void:
 		_mind_text.text = text
 
 
+func set_mind(current: int, maximum: int) -> void:
+	_mind_cur = current
+	_mind_max = maxi(maximum, 1)
+	var ratio := clampf(float(current) / float(_mind_max), 0.0, 1.0)
+	if _mind_bar:
+		_mind_bar.max_value = 1.0
+		_mind_bar.value = ratio
+	if _mind_text:
+		_mind_text.text = Loc.t("hud.mind_value_cap", [current, _mind_max])
+
+
 func _build() -> void:
 	for c in get_children():
 		c.queue_free()
@@ -95,7 +109,7 @@ func _build() -> void:
 	tray.name = "Tray"
 	tray.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tray.position = Vector2(88, 36)
-	tray.size = Vector2(HUD_W - 176, 90)
+	tray.size = Vector2(HUD_W - 176, 108)
 	var tray_style := StyleBoxFlat.new()
 	tray_style.bg_color = Color(0.10, 0.07, 0.05, 0.94)
 	tray_style.border_color = Color(0.58, 0.44, 0.22, 1)
@@ -205,15 +219,40 @@ func _build() -> void:
 		panel.add_child(key)
 		_slot_nodes[slot_id] = panel
 
+	_mind_bar = ProgressBar.new()
+	_mind_bar.name = "MindBar"
+	_mind_bar.show_percentage = false
+	_mind_bar.max_value = 1.0
+	_mind_bar.value = 1.0
+	_mind_bar.position = Vector2(10, 80)
+	_mind_bar.size = Vector2(tray.size.x - 20, 14)
+	_mind_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var mind_bg := StyleBoxFlat.new()
+	mind_bg.bg_color = Color(0.06, 0.08, 0.12, 1)
+	mind_bg.corner_radius_top_left = 3
+	mind_bg.corner_radius_top_right = 3
+	mind_bg.corner_radius_bottom_left = 3
+	mind_bg.corner_radius_bottom_right = 3
+	var mind_fill := StyleBoxFlat.new()
+	mind_fill.bg_color = Color(0.32, 0.58, 0.92, 1)
+	mind_fill.corner_radius_top_left = 3
+	mind_fill.corner_radius_top_right = 3
+	mind_fill.corner_radius_bottom_left = 3
+	mind_fill.corner_radius_bottom_right = 3
+	_mind_bar.add_theme_stylebox_override("background", mind_bg)
+	_mind_bar.add_theme_stylebox_override("fill", mind_fill)
+	tray.add_child(_mind_bar)
 	_mind_text = Label.new()
 	_mind_text.name = "MindText"
+	_mind_text.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_mind_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_mind_text.position = Vector2(8, 76)
-	_mind_text.size = Vector2(tray.size.x - 16, 14)
+	_mind_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_mind_text.add_theme_font_size_override("font_size", 11)
-	_mind_text.add_theme_color_override("font_color", Color(0.82, 0.86, 0.92, 1))
+	_mind_text.add_theme_color_override("font_color", Color(0.88, 0.92, 1.0, 1))
+	_mind_text.add_theme_color_override("font_outline_color", Color(0.04, 0.06, 0.12, 0.9))
+	_mind_text.add_theme_constant_override("outline_size", 4)
 	_mind_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tray.add_child(_mind_text)
+	_mind_bar.add_child(_mind_text)
 
 	_hp_text = Label.new()
 	_hp_text.name = "HpText"
@@ -378,6 +417,7 @@ func _process(_delta: float) -> void:
 		var max_v: float = float(_player.max_hp)
 		if absf(hp_v - _hp) > 0.05 or absf(max_v - _max_hp) > 0.05:
 			set_vitals(hp_v, max_v)
+	set_mind(MetaProgress.mind_value, MetaProgress.mind_value_max())
 	for slot_id in SLOTS:
 		var panel: Panel = _slot_nodes.get(slot_id)
 		if panel == null:
@@ -402,4 +442,13 @@ func _process(_delta: float) -> void:
 		var locked := false
 		if _player.has_method("is_skill_slot_locked"):
 			locked = bool(_player.is_skill_slot_locked(slot_id))
-		panel.modulate = Color(0.45, 0.42, 0.4, 1) if locked else Color.WHITE
+		var cost := 0
+		if core_id != "":
+			cost = CrystalCatalog.cast_cost(core_id)
+		var no_mind := cost > 0 and MetaProgress.mind_value < cost
+		if locked:
+			panel.modulate = Color(0.45, 0.42, 0.4, 1)
+		elif no_mind:
+			panel.modulate = Color(0.45, 0.52, 0.72, 1)
+		else:
+			panel.modulate = Color.WHITE

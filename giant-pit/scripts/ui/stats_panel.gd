@@ -95,7 +95,7 @@ func _build_layout() -> void:
 	_free_child_named("Equip")
 
 	var keys := [
-		"Hp", "MindVal", "MindLv", "ExpLv", "ExpXp", "Vit", "Str", "Patk", "Pdef", "Crit", "CritDmg",
+		"Hp", "MindVal", "ExpLv", "Points", "Vit", "Str", "Agi", "Int", "Spi", "Luk", "Patk",
 	]
 	var ekeys := ["Weapon", "Chest", "Pendant"]
 
@@ -198,6 +198,14 @@ func _make_stat_row(key: String) -> Panel:
 	line.add_theme_color_override("font_color", Color(0.95, 0.92, 0.85, 1))
 	line.text = key
 	hb.add_child(line)
+	if key in ["Vit", "Str", "Agi", "Int", "Spi", "Luk"]:
+		var plus := Button.new()
+		plus.name = "Plus"
+		plus.text = "+"
+		plus.custom_minimum_size = Vector2(22, 18)
+		plus.add_theme_font_size_override("font_size", 14)
+		plus.pressed.connect(_on_attr_plus.bind(key))
+		hb.add_child(plus)
 	return panel
 
 
@@ -278,19 +286,59 @@ func refresh() -> void:
 	var st = _player.stats
 	_set_row("Hp", "icon_hp", Loc.t("stat.hp"), "%d/%d" % [int(_player.hp), int(_player.max_hp)], true)
 	_set_row("MindVal", "icon_mind", Loc.t("stat.mind_value"), "%d/%d" % [MetaProgress.mind_value, MetaProgress.mind_value_max()], true)
-	_set_row("MindLv", "icon_mind_lv", Loc.t("stat.mind_level"), str(MetaProgress.mind_level), true)
-	_set_row("ExpLv", "icon_mind_lv", Loc.t("stat.explorer_lv"), str(MetaProgress.explorer_level), true)
-	_set_row("ExpXp", "icon_mind", Loc.t("stat.explorer_xp"), "%d/%d" % [MetaProgress.explorer_xp, MetaProgress.xp_to_next_level()], true)
+	_set_row("ExpLv", "icon_mind_lv", Loc.t("stat.explorer_lv"), "%d  %d/%d XP" % [MetaProgress.explorer_level, MetaProgress.explorer_xp, MetaProgress.xp_to_next_level()], true)
+	_set_row("Points", "icon_mind", Loc.t("stat.unspent"), str(MetaProgress.unspent_points), true)
 	_set_row("Vit", "icon_vitality", Loc.t("stat.vitality"), "%.0f" % st.vitality, true)
 	_set_row("Str", "icon_str", Loc.t("stat.strength"), "%.0f" % st.strength, true)
-	_set_row("Patk", "icon_patk", Loc.t("stat.patk"), "%.1f" % st.patk, true)
-	_set_row("Pdef", "icon_pdef", Loc.t("stat.pdef"), "%.1f" % st.pdef, true)
-	_set_row("Crit", "icon_crit", Loc.t("stat.crit"), ("%.0f%%" % (st.crit * 100.0)) if st.crit_enabled else "—", st.crit_enabled)
-	_set_row("CritDmg", "icon_critdmg", Loc.t("stat.critdmg"), ("%.0f%%" % (st.critdmg * 100.0)) if st.critdmg_enabled else "—", st.critdmg_enabled)
+	_set_row("Agi", "icon_crit", Loc.t("stat.agi"), "%.0f" % st.agility, true)
+	_set_row("Int", "icon_mind_lv", Loc.t("stat.int"), "%.0f" % st.intellect, true)
+	_set_row("Spi", "icon_mind", Loc.t("stat.spirit"), "%.0f" % st.spirit, true)
+	_set_row("Luk", "icon_critdmg", Loc.t("stat.luck"), "%.0f" % st.luck, true)
+	_set_row("Patk", "icon_patk", Loc.t("stat.patk"), "%.1f / %.1f" % [st.patk, st.pdef], true)
+	_refresh_plus_buttons()
 
 	_set_equip_weapon()
 	_set_equip_slot("Chest", Equipment.SLOT_CHEST, "res://assets/ui/icons/stats/equip_chest.png", "res://assets/ui/icons/stats/slot_chest.png")
 	_set_equip_slot("Pendant", Equipment.SLOT_AMULET, "res://assets/ui/icons/stats/equip_pendant.png", "res://assets/ui/icons/stats/slot_pendant.png")
+
+
+func _attr_key_for_row(row_key: String) -> String:
+	match row_key:
+		"Vit":
+			return "vit"
+		"Str":
+			return "str"
+		"Agi":
+			return "agi"
+		"Int":
+			return "int"
+		"Spi":
+			return "spi"
+		"Luk":
+			return "luk"
+		_:
+			return ""
+
+
+func _on_attr_plus(row_key: String) -> void:
+	var ak := _attr_key_for_row(row_key)
+	if ak == "":
+		return
+	if MetaProgress.spend_attr_point(ak) != "ok":
+		return
+	if _player != null and _player.has_method("_refresh_character_stats"):
+		_player._refresh_character_stats(true)
+	refresh()
+
+
+func _refresh_plus_buttons() -> void:
+	var can := MetaProgress.unspent_points > 0
+	for k in ["Vit", "Str", "Agi", "Int", "Spi", "Luk"]:
+		if not _row_nodes.has(k):
+			continue
+		var row: Panel = _row_nodes[k]
+		if row.has_node("Pad/Content/Plus"):
+			row.get_node("Pad/Content/Plus").disabled = not can
 
 
 func _set_row(key: String, icon_name: String, label: String, value: String, enabled: bool) -> void:
@@ -319,7 +367,8 @@ func _set_equip_weapon() -> void:
 		icon.texture = load(path)
 	else:
 		icon.texture = load("res://assets/ui/icons/stats/slot_weapon.png")
-	slot.get_node("Pad/Content/Line").text = "%s·%s" % [Loc.t("stat.weapon"), brand_name]
+	var imprint := Loc.t("stat.imprint_blade") if Loc.has_key("stat.imprint_blade") else "冷兵器·刀"
+	slot.get_node("Pad/Content/Line").text = "%s %s·%s" % [imprint, Loc.t("stat.weapon"), brand_name]
 
 
 func _set_equip_slot(key: String, slot_id: String, owned_icon: String, empty_icon: String) -> void:
@@ -332,7 +381,9 @@ func _set_equip_slot(key: String, slot_id: String, owned_icon: String, empty_ico
 	var eq_name: String = Loc.t("equip.chest" if slot_id == Equipment.SLOT_CHEST else "equip.amulet")
 	var eline: String
 	if owned:
-		eline = "%s %+d" % [eq_name, int(data.get("upgrade", 0))]
+		var gname := ItemTier.grade_display(int(data.get("grade", 2)))
+		var qname := ItemTier.display_name(int(data.get("quality", ItemTier.Tier.COMMON)))
+		eline = "%s  %s·%s  %+d" % [eq_name, gname, qname, int(data.get("upgrade", 0))]
 	else:
 		eline = "%s·%s" % [eq_name, Loc.t("equip.not_owned")]
 	slot.get_node("Pad/Content/Line").text = eline

@@ -8,10 +8,10 @@ signal value_changed(value: float, max_value: float)
 ## 秒 → 侵蚀值增速；满条约对应一局中后段压力
 const MAX_VALUE := 100.0
 const RATES := {
-	0: 1.2, ## 甜头档：轻加速采集？由 floor 读 tier
-	1: 1.6,
-	2: 2.2,
-	3: 3.0,
+	0: 0.6, ## 已减半；城镇抗蚀香囊可再乘 0.5
+	1: 0.8,
+	2: 1.1,
+	3: 1.5,
 }
 
 ## 阈值
@@ -30,10 +30,23 @@ func reset() -> void:
 	tier_changed.emit(tier)
 
 
+func set_value(v: float, silent: bool = false) -> void:
+	value = clampf(v, 0.0, MAX_VALUE)
+	var new_tier := _calc_tier()
+	if not silent:
+		value_changed.emit(value, MAX_VALUE)
+	if new_tier != tier:
+		tier = new_tier
+		if not silent:
+			tier_changed.emit(tier)
+	else:
+		tier = new_tier
+
+
 func tick(delta: float) -> void:
 	if paused:
 		return
-	var rate: float = float(RATES.get(tier, 2.0))
+	var rate: float = float(RATES.get(tier, 1.0)) * RunSession.erosion_rate_mult()
 	value = minf(value + rate * delta, MAX_VALUE)
 	var new_tier := _calc_tier()
 	value_changed.emit(value, MAX_VALUE)

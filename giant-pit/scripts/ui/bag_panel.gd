@@ -247,6 +247,17 @@ func _on_use_pressed() -> void:
 		r = _player.inventory.use_mind_potion_at(idx)
 		if r == "ok":
 			_player.show_toast(Loc.t("bag.mind_potion_ok", [MetaProgress.mind_value, MetaProgress.mind_value_max()]))
+	elif item_id == "item_erosion_salve":
+		r = _player.inventory.use_erosion_salve_at(idx)
+		if r == "ok":
+			_player.show_toast(Loc.t("bag.erosion_salve_ok"))
+	elif item_id == "item_erosion_ward":
+		r = _player.inventory.use_erosion_ward_at(idx)
+		if r == "ok":
+			_player.show_toast(Loc.t("bag.erosion_ward_ok"))
+		elif r == "already":
+			_player.show_toast(Loc.t("bag.erosion_ward_already"))
+			return
 	if r == "ok":
 		refresh()
 		request_refresh.emit()

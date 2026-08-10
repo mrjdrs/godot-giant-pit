@@ -90,12 +90,15 @@ func add_material(mat_id: String, count: int = 1, carry_cap: float = 9999.0) -> 
 	return "ok"
 
 
-func add_core(core_id: String, count: int = 1, carry_cap: float = 9999.0) -> String:
+func add_core(core_id: String, count: int = 1, carry_cap: float = 9999.0, grade: int = -1, quality: int = -1) -> String:
 	if count <= 0:
 		return "ok"
+	var g := grade if grade > 0 else CrystalCatalog.grade(core_id)
+	var q := quality if quality >= 0 else CrystalCatalog.tier(core_id)
 	var add_w := CrystalCatalog.weight(core_id) * float(count)
 	for entry in slots:
-		if entry.get("type") == "core" and entry.get("id") == core_id:
+		if entry.get("type") == "core" and entry.get("id") == core_id \
+				and int(entry.get("grade", g)) == g and int(entry.get("quality", q)) == q:
 			if not can_add_weight(add_w, carry_cap):
 				return "overweight"
 			entry["count"] = int(entry["count"]) + count
@@ -105,7 +108,7 @@ func add_core(core_id: String, count: int = 1, carry_cap: float = 9999.0) -> Str
 		return "full"
 	if not can_add_weight(add_w, carry_cap):
 		return "overweight"
-	slots.append({"type": "core", "id": core_id, "count": count, "rank": 1})
+	slots.append({"type": "core", "id": core_id, "count": count, "rank": 1, "grade": g, "quality": q})
 	changed.emit()
 	return "ok"
 
@@ -123,6 +126,33 @@ func consume_core(core_id: String) -> bool:
 	if idx < 0:
 		return false
 	return remove_at(idx, 1)
+
+
+func consume_core_min_grade(core_id: String, min_grade: int) -> bool:
+	var best_i := -1
+	var best_g := 999
+	for i in slots.size():
+		var e: Dictionary = slots[i]
+		if e.get("type") != "core" or str(e.get("id")) != core_id:
+			continue
+		var g := int(e.get("grade", CrystalCatalog.grade(core_id)))
+		if g >= min_grade and g < best_g:
+			best_g = g
+			best_i = i
+	if best_i < 0:
+		return false
+	return remove_at(best_i, 1)
+
+
+func count_id(item_id: String, type_filter: String = "") -> int:
+	var n := 0
+	for e in slots:
+		if str(e.get("id")) != item_id:
+			continue
+		if type_filter != "" and str(e.get("type")) != type_filter:
+			continue
+		n += int(e.get("count", 1))
+	return n
 
 
 func add_rune_as_item(rune_id: String, rank: int = 1, carry_cap: float = 9999.0) -> String:
@@ -208,6 +238,44 @@ func use_mind_potion_at(index: int) -> String:
 	MetaProgress.restore_mind_value(MetaProgress.MIND_POTION_RESTORE)
 	changed.emit()
 	return "ok"
+
+
+func use_erosion_salve_at(index: int) -> String:
+	if index < 0 or index >= slots.size():
+		return "none"
+	var entry: Dictionary = slots[index]
+	if entry.get("type") != "item" or str(entry.get("id")) != "item_erosion_salve":
+		return "wrong"
+	var host := _erosion_host()
+	if host == null or not host.has_method("apply_erosion_salve"):
+		return "wrong"
+	if not remove_at(index, 1):
+		return "none"
+	host.apply_erosion_salve(MetaProgress.EROSION_SALVE_HEAL)
+	changed.emit()
+	return "ok"
+
+
+func use_erosion_ward_at(index: int) -> String:
+	if index < 0 or index >= slots.size():
+		return "none"
+	var entry: Dictionary = slots[index]
+	if entry.get("type") != "item" or str(entry.get("id")) != "item_erosion_ward":
+		return "wrong"
+	if RunSession.erosion_ward_active:
+		return "already"
+	if not remove_at(index, 1):
+		return "none"
+	RunSession.erosion_ward_active = true
+	changed.emit()
+	return "ok"
+
+
+func _erosion_host() -> Node:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null:
+		return null
+	return tree.get_first_node_in_group("pit_floor")
 
 
 func paper_note_count() -> int:

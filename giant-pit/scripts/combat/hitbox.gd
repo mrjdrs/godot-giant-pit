@@ -31,8 +31,8 @@ func enable(p_damage: float, p_knockback: float, p_source: Node2D = null, p_pois
 	source = p_source
 	_hit_ids.clear()
 	_active = true
-	## Defer monitoring flip — flipping Area2D monitoring mid-idle can flush physics.
-	set_deferred("monitoring", true)
+	monitoring = true
+	call_deferred("_flush_overlaps")
 
 
 func disable() -> void:
@@ -40,6 +40,13 @@ func disable() -> void:
 	monitoring = false
 	set_deferred("monitoring", false)
 	_hit_ids.clear()
+
+
+func _flush_overlaps() -> void:
+	if not _active or not monitoring:
+		return
+	for area in get_overlapping_areas():
+		_on_area_entered(area)
 
 
 func _on_area_entered(area: Area2D) -> void:

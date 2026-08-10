@@ -27,6 +27,23 @@ const ITEMS := {
 		"mind_restore": 30,
 		"desc_key": "item.mind_potion.desc",
 	},
+	"item_erosion_salve": {
+		"name_key": "item.erosion_salve",
+		"icon": "res://assets/ui/icons/bag/item_mind_potion.png",
+		"stack": 10,
+		"weight": 0.4,
+		"usable": true,
+		"erosion_heal": 25,
+		"desc_key": "item.erosion_salve.desc",
+	},
+	"item_erosion_ward": {
+		"name_key": "item.erosion_ward",
+		"icon": "res://assets/ui/icons/bag/item_bag_expand.png",
+		"stack": 5,
+		"weight": 0.3,
+		"usable": true,
+		"desc_key": "item.erosion_ward.desc",
+	},
 }
 
 

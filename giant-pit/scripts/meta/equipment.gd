@@ -19,7 +19,16 @@ static func make_default_slot(_slot: String) -> Dictionary:
 		"owned": false,
 		"upgrade": 0, ## 强化等级，可为负表示磨损层（相对白板）
 		"wear": 0,
+		"grade": 2, ## 八品
+		"quality": ItemTier.Tier.COMMON,
 	}
+
+
+static func ensure_fields(slot_data: Dictionary) -> void:
+	if not slot_data.has("grade"):
+		slot_data["grade"] = 2
+	if not slot_data.has("quality"):
+		slot_data["quality"] = ItemTier.Tier.COMMON
 
 
 static func craft_cost(slot: String) -> Dictionary:
@@ -35,11 +44,13 @@ static func effective_stats(slot_data: Dictionary, slot: String) -> Dictionary:
 		return {"max_hp": 0.0, "defense": 0.0, "damage": 0.0}
 	var upgrade := int(slot_data.get("upgrade", 0))
 	var wear := int(slot_data.get("wear", 0))
+	var g_mult := ItemTier.grade_scale(int(slot_data.get("grade", 2)))
+	var q_mult := ItemTier.quality_scale(int(slot_data.get("quality", ItemTier.Tier.COMMON)))
 	## 有效强化 = upgrade - wear，再 clamp 到使属性 >= 50% 白板
 	var net := upgrade - wear
 	var out := {}
 	for k in base.keys():
-		var white: float = float(base[k])
+		var white: float = float(base[k]) * g_mult * q_mult
 		var per_level := white * 0.15
 		var raw: float = white + per_level * float(net)
 		var floor_v: float = white * 0.5

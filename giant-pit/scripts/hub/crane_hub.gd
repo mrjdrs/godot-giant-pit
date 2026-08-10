@@ -8,7 +8,9 @@ const Equipment = preload("res://scripts/meta/equipment.gd")
 const QuestDefs = preload("res://scripts/meta/quest_defs.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
 const MaterialCatalog = preload("res://scripts/items/material_catalog.gd")
+const RegionCatalog = preload("res://scripts/pit/region_catalog.gd")
 const SheetHostScript = preload("res://scripts/ui/character_sheet_host.gd")
+const PauseMenuScript = preload("res://scripts/ui/pause_menu.gd")
 
 @onready var world: Node2D = $World
 @onready var entities: Node2D = $World/Entities
@@ -45,9 +47,14 @@ const STASH_COLS := 6
 
 
 func _ready() -> void:
+	if RunSession.active:
+		RunSession.clear()
+	if not MetaProgress.ensure_session_loaded():
+		MetaProgress.new_game(1)
 	_build_hub()
 	_spawn_player()
 	_ensure_sheet_host()
+	PauseMenuScript.install(self)
 	panel.visible = false
 	stash_grid.visible = false
 	btn_close.pressed.connect(_close_panel)
@@ -162,20 +169,26 @@ func _process(_delta: float) -> void:
 
 
 func _build_hub() -> void:
-	_atmosphere = AtmosphereScript.install(world, self, "hub")
+	_add_hub_backdrop()
+	_atmosphere = AtmosphereScript.install(world, self, "hub", 0.18, false)
 	var floor_tex: Texture2D = load("res://assets/tiles/hub/hub_floor.png")
-	for y in 10:
-		for x in 14:
+	const HUB_COLS := 20
+	const HUB_ROWS := 16
+	var origin := Vector2(-float(HUB_COLS) * 16.0, -float(HUB_ROWS) * 16.0)
+	for y in HUB_ROWS:
+		for x in HUB_COLS:
 			var s := Sprite2D.new()
 			s.texture = floor_tex
 			s.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			s.position = Vector2(x * 32 - 208, y * 32 - 144)
+			s.position = origin + Vector2(x * 32 + 16, y * 32 + 16)
 			s.z_index = -2
 			world.add_child(s)
-	_wall_box(Vector2(0, -160), Vector2(448, 16))
-	_wall_box(Vector2(0, 160), Vector2(448, 16))
-	_wall_box(Vector2(-224, 0), Vector2(16, 320))
-	_wall_box(Vector2(224, 0), Vector2(16, 320))
+	var floor_w := float(HUB_COLS * 32)
+	var floor_h := float(HUB_ROWS * 32)
+	_wall_box(Vector2(0, -floor_h * 0.5 - 8.0), Vector2(floor_w + 16.0, 16))
+	_wall_box(Vector2(0, floor_h * 0.5 + 8.0), Vector2(floor_w + 16.0, 16))
+	_wall_box(Vector2(-floor_w * 0.5 - 8.0, 0), Vector2(16, floor_h + 16.0))
+	_wall_box(Vector2(floor_w * 0.5 + 8.0, 0), Vector2(16, floor_h + 16.0))
 
 	_add_facility("board", Vector2(-120, -40), "res://assets/tiles/hub/hub_board.png")
 	_add_facility("alchemy", Vector2(0, -40), "res://assets/tiles/hub/hub_alchemy.png")
@@ -192,6 +205,19 @@ func _build_hub() -> void:
 	if _atmosphere and _atmosphere.has_method("add_glow"):
 		_atmosphere.add_glow(Vector2(80, 80), Color(1.0, 0.85, 0.55, 1.0), 0.28, 100.0)
 		_atmosphere.add_glow(Vector2(120, 60), Color(0.9, 0.95, 1.0, 1.0), 0.18, 80.0)
+
+
+func _add_hub_backdrop() -> void:
+	var bg := Polygon2D.new()
+	bg.name = "HubBackdrop"
+	bg.z_index = -50
+	bg.color = Color(0.10, 0.10, 0.12, 1)
+	var s := 2800.0
+	bg.polygon = PackedVector2Array([
+		Vector2(-s, -s), Vector2(s, -s), Vector2(s, s), Vector2(-s, s)
+	])
+	world.add_child(bg)
+	world.move_child(bg, 0)
 
 
 func _wall_box(center: Vector2, size: Vector2) -> void:
@@ -254,7 +280,11 @@ func _spawn_player() -> void:
 	player.side_view = false
 	player.combat_enabled = false
 	player.apply_meta_brand("iron")
-	player.toast.connect(func(t): _toast(t))
+	player.toast.connect(func(t, _cat = 0, _col = Color.TRANSPARENT): _toast(t))
+	if player.has_node("Camera2D"):
+		player.get_node("Camera2D").zoom = Vector2(3.0, 3.0)
+	if player.has_method("set_camera_limits"):
+		player.set_camera_limits(-336.0, -272.0, 336.0, 272.0)
 	if sheet_host:
 		sheet_host.bind_player(player, true)
 
@@ -264,7 +294,7 @@ func _refresh_status() -> void:
 	hud.get_node("StatusLabel").text = "%s | %s | %s | %s | %s | %s" % [
 		day_txt,
 		Loc.t("hud.pit_open"),
-		Loc.t("hud.mind", [MetaProgress.mind_level]),
+		Loc.t("hud.xp", [MetaProgress.explorer_level, MetaProgress.explorer_xp, MetaProgress.xp_to_next_level()]),
 		Loc.t("hud.mind_value_cap", [MetaProgress.mind_value, MetaProgress.mind_value_max()]),
 		Loc.t("hud.gold", [MetaProgress.gold]),
 		_quest_status_text(),
@@ -435,17 +465,24 @@ func _open_inn() -> void:
 	_mode = "inn"
 	_show_text_panel()
 	panel_title.text = Loc.t("hub.inn_title")
-	_set_panel_body(Loc.t("hub.inn_body", [
-		MetaProgress.game_day,
-		MetaProgress.mind_value,
-		MetaProgress.mind_value_max(),
-	]))
+	_set_panel_body("%s\n\n%s" % [
+		Loc.t("hub.inn_body", [
+			MetaProgress.game_day,
+			MetaProgress.mind_value,
+			MetaProgress.mind_value_max(),
+		]),
+		Loc.t("hub.inn_shop_line", [
+			MetaProgress.EROSION_SALVE_PRICE,
+			MetaProgress.EROSION_WARD_PRICE,
+		]),
+	])
 	btn_a.text = Loc.t("hub.inn_rest")
-	btn_a.visible = true
+	btn_b.text = Loc.t("hub.inn_buy_salve", [MetaProgress.EROSION_SALVE_PRICE])
+	btn_c.text = Loc.t("hub.inn_buy_ward", [MetaProgress.EROSION_WARD_PRICE])
 	btn_a.disabled = false
-	btn_b.visible = false
-	btn_c.visible = false
-	_layout_panel_buttons(true, false, false)
+	btn_b.disabled = not MetaProgress.can_afford_gold(MetaProgress.EROSION_SALVE_PRICE)
+	btn_c.disabled = not MetaProgress.can_afford_gold(MetaProgress.EROSION_WARD_PRICE)
+	_layout_panel_buttons(true, true, true)
 
 
 func _open_exchange() -> void:
@@ -486,7 +523,7 @@ func _open_pit() -> void:
 	else:
 		lines.append(Loc.t("hub.enter_warp_need"))
 		for wid in MetaProgress.unlocked_warps:
-			lines.append(" · " + Loc.t("hub.warp_option", [Loc.t("warp.%s" % wid)]))
+			lines.append(" · " + Loc.t("hub.warp_option", [RegionCatalog.warp_display_name(str(wid))]))
 	panel_body.text = "\n".join(lines)
 	btn_a.text = Loc.t("hub.enter")
 	btn_a.visible = true
@@ -535,7 +572,11 @@ func _equip_text() -> String:
 		var name_key := "equip.chest" if slot == Equipment.SLOT_CHEST else "equip.amulet"
 		var data: Dictionary = MetaProgress.equipment[slot]
 		if bool(data.get("owned", false)):
-			lines.append("%s：%s" % [Loc.t(name_key), Loc.t("equip.owned", [int(data.get("upgrade", 0)), int(data.get("wear", 0))])])
+			var gq := "%s·%s" % [
+				ItemTier.grade_display(int(data.get("grade", 2))),
+				ItemTier.display_name(int(data.get("quality", ItemTier.Tier.COMMON))),
+			]
+			lines.append("%s：%s  %s" % [Loc.t(name_key), gq, Loc.t("equip.owned", [int(data.get("upgrade", 0)), int(data.get("wear", 0))])])
 			var st: Dictionary = Equipment.effective_stats(data, slot)
 			lines.append("  " + Loc.t("equip.stats", [st.max_hp, st.defense, st.damage * 100.0]))
 			lines.append("  " + Loc.t("hub.upgrade_cost", [_format_cost({Equipment.UPGRADE_MAT: Equipment.UPGRADE_COST})]))
@@ -732,6 +773,13 @@ func _on_btn_b() -> void:
 			else:
 				_toast(Loc.t("hub.no_paper"))
 			_open_exchange()
+		"inn":
+			var ir := MetaProgress.buy_erosion_salve(1)
+			if ir == "ok":
+				_toast(Loc.t("hub.buy_salve_ok"))
+			else:
+				_toast(Loc.t("hub.no_gold"))
+			_open_inn()
 		"awaken":
 			var ar := MetaProgress.try_awaken("ironwall")
 			_toast_awaken(ar)
@@ -753,6 +801,13 @@ func _on_btn_c() -> void:
 			else:
 				_toast(Loc.t("hub.no_gold"))
 			_open_exchange()
+		"inn":
+			var ir := MetaProgress.buy_erosion_ward(1)
+			if ir == "ok":
+				_toast(Loc.t("hub.buy_ward_ok"))
+			else:
+				_toast(Loc.t("hub.no_gold"))
+			_open_inn()
 
 
 func _accept_quest_index(i: int) -> void:

@@ -10,12 +10,16 @@ signal died_with_id(enemy_id: String, meta: Dictionary)
 @export var max_hp: float = 30.0
 @export var move_speed: float = 70.0
 @export var contact_damage: float = 6.0
+@export var armor: float = 0.0
 @export var attack_cooldown: float = 0.8
 @export var aggro_range: float = 160.0
 @export var drop_mat_id: String = "beast_scale"
 @export var drop_rune_chance: float = 0.35
 @export var enemy_id: String = "grub"
 @export var is_boss: bool = false
+@export var is_elite: bool = false
+@export var is_special: bool = false
+@export var max_poise: float = 0.0
 @export var warp_unlock_id: String = "" ## 看守绑定的传送点
 @export var quest_scale: bool = false
 
@@ -24,6 +28,9 @@ signal died_with_id(enemy_id: String, meta: Dictionary)
 @onready var hp_label: Label = $HPLabel
 
 var hp: float = 30.0
+var poise: float = 0.0
+var _poise_broken: bool = false
+var _stun_t: float = 0.0
 var flash_timer: float = 0.0
 var knockback_velocity: Vector2 = Vector2.ZERO
 var attack_cd: float = 0.0
@@ -32,23 +39,42 @@ var _burn_dps: float = 0.0
 var _player: Node2D = null
 var _hp_bg: Polygon2D = null
 var _hp_fill: Polygon2D = null
+var _poise_fill: Polygon2D = null
 var _dying: bool = false
 const HP_BAR_W := 28.0
 const HP_BAR_H := 4.0
+const POISE_BAR_H := 2.0
+const BREAK_STUN := 1.2
+const BREAK_DMG_MULT := 1.5
 
 
 func configure(def: Dictionary) -> void:
 	enemy_id = str(def.get("id", enemy_id))
 	max_hp = float(def.get("hp", max_hp))
 	contact_damage = float(def.get("dmg", contact_damage))
+	armor = float(def.get("armor", armor))
 	drop_mat_id = str(def.get("drop", drop_mat_id))
 	drop_rune_chance = float(def.get("rune", drop_rune_chance))
 	quest_scale = bool(def.get("quest_scale", false))
 	warp_unlock_id = str(def.get("warp", ""))
 	is_boss = bool(def.get("is_boss", false))
+	is_elite = bool(def.get("is_elite", enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_")))
+	is_special = bool(def.get("is_special", enemy_id.begins_with("special_")))
+	if def.has("poise"):
+		max_poise = float(def.get("poise", 0.0))
+	elif is_boss:
+		max_poise = 80.0
+	elif is_special:
+		max_poise = 50.0
+	elif is_elite:
+		max_poise = 40.0
+	else:
+		max_poise = 0.0
 	hp = max_hp
+	poise = max_poise
 	if is_node_ready():
 		_apply_icon(str(def.get("icon", "")))
+		_apply_visual_scale()
 		_update_hp_label()
 	else:
 		set_meta("_pending_icon", str(def.get("icon", "")))
@@ -81,8 +107,18 @@ func _ready() -> void:
 	if has_meta("_pending_icon"):
 		_apply_icon(str(get_meta("_pending_icon")))
 		remove_meta("_pending_icon")
+	_apply_visual_scale()
 	_update_hp_label()
 	call_deferred("_find_player")
+
+
+func _apply_visual_scale() -> void:
+	if sprite == null:
+		return
+	if is_boss or is_elite or is_special:
+		sprite.scale = Vector2.ONE
+	else:
+		sprite.scale = Vector2(0.7, 0.7)
 
 
 func _setup_hp_bar() -> void:
@@ -102,6 +138,10 @@ func _setup_hp_bar() -> void:
 	_hp_fill.color = Color(0.85, 0.15, 0.12, 1)
 	_hp_fill.z_index = 6
 	add_child(_hp_fill)
+	_poise_fill = Polygon2D.new()
+	_poise_fill.color = Color(0.85, 0.72, 0.18, 1)
+	_poise_fill.z_index = 6
+	add_child(_poise_fill)
 
 
 func _find_player() -> void:
@@ -127,6 +167,16 @@ func _physics_process(delta: float) -> void:
 
 	if attack_cd > 0.0:
 		attack_cd -= delta
+	if _stun_t > 0.0:
+		_stun_t -= delta
+		if _stun_t <= 0.0:
+			_poise_broken = false
+			poise = max_poise
+			_update_hp_label()
+		knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, 900.0 * delta)
+		velocity = knockback_velocity
+		move_and_slide()
+		return
 
 	if _player == null or not is_instance_valid(_player):
 		_find_player()
@@ -178,6 +228,19 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var dmg: float = float(hitbox.get("damage"))
 	var knock: float = float(hitbox.get("knockback_force"))
 	var src = hitbox.get("source")
+	if _poise_broken:
+		dmg *= BREAK_DMG_MULT
+	if armor > 0.0 and dmg > 0.0:
+		dmg = maxf(dmg - armor, dmg * 0.35)
+	if max_poise > 0.0 and not _poise_broken:
+		var pdmg: float = float(hitbox.get("poise_damage"))
+		if pdmg <= 0.0:
+			pdmg = knock * 0.08
+		poise = maxf(poise - pdmg, 0.0)
+		if poise <= 0.0:
+			_poise_broken = true
+			_stun_t = BREAK_STUN
+			poise = 0.0
 	hp = maxf(hp - dmg, 0.0)
 	flash_timer = 0.15
 	_update_hp_label()
@@ -216,10 +279,12 @@ func _finish_die() -> void:
 		return
 	if quest_scale or is_in_group("scale_rock"):
 		RunSession.kill_scale += 1
+		MetaProgress.quest_kill_progress += 1
 	if is_boss:
 		RunSession.grant_special_mind()
-	var meta := {"warp": warp_unlock_id, "is_boss": is_boss}
+	var meta := {"warp": warp_unlock_id, "is_boss": is_boss, "is_elite": is_elite, "is_special": is_special}
 	died_with_id.emit(enemy_id, meta)
+	GameBus.pub("enemy_died", {"id": enemy_id, "rank": _rank_name(), "pos": global_position, "meta": meta})
 	if warp_unlock_id != "":
 		var tree := get_tree()
 		if tree != null:
@@ -243,7 +308,42 @@ func _spawn_drops() -> void:
 	parent.add_child(mat)
 	mat.global_position = global_position + Vector2(randf_range(-14, 14), randf_range(-10, 10))
 	mat.setup(0, drop_mat_id, 1) ## MATERIAL
-	## 击杀不掉技能 / 晶核，只掉材料与经验。
+	var luck_bonus := 0.0
+	if Engine.get_main_loop() != null:
+		luck_bonus = float(MetaProgress.attr_value("luk")) * 0.005
+	if randf() < CrystalCatalog.skill_drop_chance(enemy_id, is_boss) + luck_bonus:
+		var core_id := CrystalCatalog.drop_skill_core(enemy_id, is_boss)
+		if core_id != "":
+			var core := PickupScene.instantiate()
+			parent.add_child(core)
+			core.global_position = global_position + Vector2(randf_range(-18, 18), randf_range(-14, 14))
+			core.setup(
+				2, core_id, 1,
+				CrystalCatalog.roll_drop_grade(enemy_id, is_boss),
+				CrystalCatalog.roll_drop_quality(enemy_id, is_boss)
+			)
+			GameBus.pub("core_dropped", {"core_id": core_id, "pos": core.global_position})
+	if randf() < CrystalCatalog.attr_drop_chance(enemy_id, is_boss) + luck_bonus:
+		var attr_id := CrystalCatalog.roll_attr_core(is_elite or is_boss or is_special)
+		if attr_id != "":
+			var ac := PickupScene.instantiate()
+			parent.add_child(ac)
+			ac.global_position = global_position + Vector2(randf_range(-18, 18), randf_range(-14, 14))
+			ac.setup(
+				2, attr_id, 1,
+				CrystalCatalog.roll_drop_grade(enemy_id, is_boss),
+				CrystalCatalog.roll_drop_quality(enemy_id, is_boss)
+			)
+
+
+func _rank_name() -> String:
+	if is_boss:
+		return "lord"
+	if is_special:
+		return "special"
+	if is_elite:
+		return "elite"
+	return "trash"
 
 
 func _update_hp_label() -> void:
@@ -258,4 +358,19 @@ func _update_hp_label() -> void:
 		Vector2(x0 + w, y0),
 		Vector2(x0 + w, y0 + HP_BAR_H),
 		Vector2(x0, y0 + HP_BAR_H),
+	])
+	if _poise_fill == null:
+		return
+	if max_poise <= 0.0:
+		_poise_fill.visible = false
+		return
+	_poise_fill.visible = true
+	var pr := clampf(poise / max_poise, 0.0, 1.0)
+	var pw := HP_BAR_W * pr
+	var py := y0 + HP_BAR_H + 1.0
+	_poise_fill.polygon = PackedVector2Array([
+		Vector2(x0, py),
+		Vector2(x0 + pw, py),
+		Vector2(x0 + pw, py + POISE_BAR_H),
+		Vector2(x0, py + POISE_BAR_H),
 	])
