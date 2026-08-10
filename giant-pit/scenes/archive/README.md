@@ -2,7 +2,7 @@
 
 Scenes here are **not** on the main path.
 
-## Current main path (doc v2.0 · 俯视 ARPG)
+## Current main path (doc v3.0 · 俯视 ARPG)
 
 - Hub: `res://scenes/hub/crane_hub.tscn`
 - Pit: `res://scenes/pit/pit_floor_01.tscn`
