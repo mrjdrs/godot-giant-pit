@@ -30,6 +30,9 @@ var equipment: Dictionary = {}
 var learned_runes: Dictionary = {} ## 旧存档兼容；新进度用 learned_skills
 var learned_skills: Dictionary = {} ## core_id -> rank(int)
 var skill_loadout: Dictionary = {"rmb": "", "q": "", "e": "", "r": "", "f": "", "c": ""}
+## 试刀场沙盒：改等级/装配只动内存，save_game 直接跳过，离场还原。
+var _skill_sandbox_active: bool = false
+var _skill_sandbox_snap: Dictionary = {}
 var explorer_xp: int = 0
 var explorer_level: int = 1
 var active_quest_id: String = ""
@@ -49,6 +52,7 @@ const WARP_COST_TRAVEL := 10
 const MIND_VALUE_BASE := 40
 const MIND_VALUE_PER_INT := 4
 const MIND_VALUE_PER_LEVEL := 2
+const TRAINING_MIND_MAX := 999
 const POINTS_PER_LEVEL := 3
 const ATTR_KEYS := ["str", "vit", "agi", "int", "spi", "luk"]
 const PAPER_FACE_VALUE := 100 ## 换出时标价（金币→券）
@@ -66,6 +70,8 @@ const AWAKEN_IRON_COST := {"mat_iron_guard": 2, "alchem_slag": 3}
 
 
 func mind_value_max() -> int:
+	if _skill_sandbox_active:
+		return TRAINING_MIND_MAX
 	var int_pts := int(attr_allocated.get("int", 0))
 	return MIND_VALUE_BASE + int_pts * MIND_VALUE_PER_INT + explorer_level * MIND_VALUE_PER_LEVEL
 
@@ -91,13 +97,22 @@ func has_learned(rune_id: String) -> bool:
 
 
 func has_learned_skill(core_id: String) -> bool:
-	return int(learned_skills.get(core_id, 0)) > 0 or bool(learned_runes.get(core_id, false))
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var sid := SkillCatalog.migrate_id(core_id)
+	return int(learned_skills.get(sid, 0)) > 0 \
+		or int(learned_skills.get(core_id, 0)) > 0 \
+		or bool(learned_runes.get(sid, false)) \
+		or bool(learned_runes.get(core_id, false))
 
 
 func skill_rank(core_id: String) -> int:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var sid := SkillCatalog.migrate_id(core_id)
+	if int(learned_skills.get(sid, 0)) > 0:
+		return int(learned_skills[sid])
 	if int(learned_skills.get(core_id, 0)) > 0:
 		return int(learned_skills[core_id])
-	if bool(learned_runes.get(core_id, false)):
+	if bool(learned_runes.get(sid, false)) or bool(learned_runes.get(core_id, false)):
 		return 1
 	return 0
 
@@ -136,38 +151,42 @@ func skill_in_slot(slot: String) -> String:
 	return str(skill_loadout.get(slot, ""))
 
 
-func assign_skill_slot(slot: String, core_id: String) -> String:
-	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
-	if not slot in CrystalCatalog.HOTKEY_SLOTS:
+func assign_skill_slot(slot: String, core_id: String, persist: bool = true) -> String:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not slot in SkillCatalog.HOTKEY_SLOTS:
 		return "bad_slot"
-	if core_id != "" and not has_learned_skill(core_id):
+	var sid := SkillCatalog.migrate_id(core_id) if core_id != "" else ""
+	if sid != "" and not has_learned_skill(sid):
 		return "unlearned"
-	if core_id != "" and not CrystalCatalog.is_active(core_id):
+	if sid != "" and not SkillCatalog.is_active(sid):
 		return "passive"
-	for other in CrystalCatalog.HOTKEY_SLOTS:
-		if other != slot and str(skill_loadout.get(other, "")) == core_id and core_id != "":
+	for other in SkillCatalog.HOTKEY_SLOTS:
+		if other != slot and str(skill_loadout.get(other, "")) == sid and sid != "":
 			skill_loadout[other] = ""
-	skill_loadout[slot] = core_id
+	skill_loadout[slot] = sid
 	changed.emit()
-	save_game()
+	if persist:
+		save_game()
 	return "ok"
 
 
-func cycle_skill_slot(slot: String) -> String:
-	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
-	if not slot in CrystalCatalog.HOTKEY_SLOTS:
+func cycle_skill_slot(slot: String, persist: bool = true) -> String:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not slot in SkillCatalog.HOTKEY_SLOTS:
 		return "bad_slot"
 	var actives: Array = []
 	for cid in learned_skills.keys():
-		if int(learned_skills[cid]) > 0 and CrystalCatalog.is_active(str(cid)):
-			actives.append(str(cid))
+		var sid := SkillCatalog.migrate_id(str(cid))
+		if int(learned_skills[cid]) > 0 and SkillCatalog.is_active(sid) and not actives.has(sid):
+			actives.append(sid)
 	actives.sort()
 	if actives.is_empty():
 		skill_loadout[slot] = ""
 		changed.emit()
-		save_game()
+		if persist:
+			save_game()
 		return "ok"
-	var cur := str(skill_loadout.get(slot, ""))
+	var cur := SkillCatalog.migrate_id(str(skill_loadout.get(slot, "")))
 	var idx := actives.find(cur)
 	var next_id := ""
 	if idx < 0:
@@ -176,10 +195,140 @@ func cycle_skill_slot(slot: String) -> String:
 		next_id = ""
 	else:
 		next_id = str(actives[idx + 1])
-	return assign_skill_slot(slot, next_id)
+	return assign_skill_slot(slot, next_id, persist)
+
+
+func is_skill_sandbox_active() -> bool:
+	return _skill_sandbox_active
+
+
+func snapshot_skill_state() -> Dictionary:
+	return {
+		"learned_skills": learned_skills.duplicate(true),
+		"skill_loadout": skill_loadout.duplicate(true),
+		"mind_value": mind_value,
+	}
+
+
+func _apply_skill_state(snap: Dictionary) -> void:
+	learned_skills = snap.get("learned_skills", {}).duplicate(true)
+	skill_loadout = snap.get("skill_loadout", {}).duplicate(true)
+	if snap.has("mind_value"):
+		mind_value = int(snap["mind_value"])
+
+
+func begin_skill_sandbox() -> void:
+	if _skill_sandbox_active:
+		return
+	_skill_sandbox_snap = snapshot_skill_state()
+	_skill_sandbox_active = true
+
+
+func end_skill_sandbox() -> void:
+	if not _skill_sandbox_active:
+		return
+	_apply_skill_state(_skill_sandbox_snap)
+	_skill_sandbox_active = false
+	_skill_sandbox_snap.clear()
+	changed.emit()
+
+
+func restore_skill_sandbox_snapshot() -> void:
+	if not _skill_sandbox_active or _skill_sandbox_snap.is_empty():
+		return
+	_apply_skill_state(_skill_sandbox_snap)
+	changed.emit()
+
+
+func set_skill_rank_sandbox(skill_id: String, rank: int) -> String:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not _skill_sandbox_active:
+		return "no_sandbox"
+	var sid := SkillCatalog.migrate_id(skill_id)
+	if not SkillCatalog.has_id(sid):
+		return "unknown"
+	var r := clampi(rank, 0, SkillCatalog.max_rank(sid))
+	if r <= 0:
+		learned_skills.erase(sid)
+		for slot in SkillCatalog.HOTKEY_SLOTS:
+			if str(skill_loadout.get(slot, "")) == sid:
+				skill_loadout[slot] = ""
+	else:
+		learned_skills[sid] = r
+		if SkillCatalog.is_active(sid):
+			var equipped := false
+			for slot in SkillCatalog.HOTKEY_SLOTS:
+				if str(skill_loadout.get(slot, "")) == sid:
+					equipped = true
+					break
+			if not equipped:
+				for slot in SkillCatalog.HOTKEY_SLOTS:
+					if str(skill_loadout.get(slot, "")) == "":
+						skill_loadout[slot] = sid
+						break
+	changed.emit()
+	return "ok"
+
+
+func fill_all_skills_sandbox() -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not _skill_sandbox_active:
+		return
+	for sid in SkillCatalog.all_ids():
+		learned_skills[str(sid)] = SkillCatalog.max_rank(str(sid))
+	var used: Dictionary = {}
+	for slot in SkillCatalog.HOTKEY_SLOTS:
+		var cur := str(skill_loadout.get(slot, ""))
+		if cur != "":
+			used[cur] = true
+	for sid in SkillCatalog.all_ids():
+		var id_str := str(sid)
+		if not SkillCatalog.is_active(id_str) or used.has(id_str):
+			continue
+		for slot in SkillCatalog.HOTKEY_SLOTS:
+			if str(skill_loadout.get(slot, "")) == "":
+				skill_loadout[slot] = id_str
+				used[id_str] = true
+				break
+	changed.emit()
 
 
 func try_comprehend(core_id: String, inventory = null, from_stash: bool = false) -> String:
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	## 属性晶核仍可在背包/仓库消耗感悟。
+	if CrystalCatalog.is_attr(core_id):
+		return _try_comprehend_attr(core_id, inventory, from_stash)
+	if not from_stash:
+		return "pit_blocked"
+	var sid := SkillCatalog.migrate_id(core_id)
+	if not SkillCatalog.has_id(sid):
+		return "unknown"
+	if explorer_level < SkillCatalog.level_req(sid):
+		return "level"
+	var already := skill_rank(sid)
+	if already >= SkillCatalog.max_rank(sid):
+		return "learned"
+	if not SkillCatalog.prereqs_met(sid, skill_rank):
+		return "prereq"
+	var cost := SkillCatalog.learn_cost_for_rank(sid, already + 1)
+	if cost > 0 and stash_count(SkillCatalog.CRYSTAL_ID) < cost:
+		return "no_crystal"
+	if cost > 0 and not consume_stash({SkillCatalog.CRYSTAL_ID: cost}):
+		return "no_crystal"
+	learned_skills[sid] = already + 1
+	learned_runes[sid] = true
+	if SkillCatalog.is_active(sid) and already == 0:
+		for slot in SkillCatalog.HOTKEY_SLOTS:
+			if str(skill_loadout.get(slot, "")) == "":
+				skill_loadout[slot] = sid
+				break
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func _try_comprehend_attr(core_id: String, inventory = null, from_stash: bool = false) -> String:
 	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 	if not CrystalCatalog.has_id(core_id):
 		return "unknown"
@@ -190,8 +339,6 @@ func try_comprehend(core_id: String, inventory = null, from_stash: bool = false)
 	if from_stash:
 		if stash_count(core_id) < 1:
 			return "no_rune"
-		if CrystalCatalog.grade(core_id) < need_grade:
-			return "grade"
 		if not consume_stash({core_id: 1}):
 			return "no_rune"
 	else:
@@ -206,11 +353,37 @@ func try_comprehend(core_id: String, inventory = null, from_stash: bool = false)
 			return "no_rune"
 	learned_skills[core_id] = already + 1
 	learned_runes[core_id] = true
-	if CrystalCatalog.is_active(core_id) and already == 0:
-		for slot in CrystalCatalog.HOTKEY_SLOTS:
-			if str(skill_loadout.get(slot, "")) == "":
-				skill_loadout[slot] = core_id
-				break
+	changed.emit()
+	save_game()
+	return "ok"
+
+
+func try_forget(skill_id: String) -> String:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var sid := SkillCatalog.migrate_id(skill_id)
+	if not SkillCatalog.has_id(sid):
+		return "unknown"
+	var rank := skill_rank(sid)
+	if rank <= 0:
+		return "unlearned"
+	if SkillCatalog.is_innate(sid) and rank <= 1:
+		return "innate"
+	var after_rank := 0
+	if SkillCatalog.is_innate(sid):
+		after_rank = 1
+	if SkillCatalog.is_required_by_others(sid, after_rank, skill_rank):
+		return "prereq"
+	var refund := SkillCatalog.spent_cost(sid, rank) - SkillCatalog.spent_cost(sid, after_rank)
+	if after_rank > 0:
+		learned_skills[sid] = after_rank
+	else:
+		learned_skills.erase(sid)
+		learned_runes.erase(sid)
+		for slot in SkillCatalog.HOTKEY_SLOTS:
+			if str(skill_loadout.get(slot, "")) == sid:
+				skill_loadout[slot] = ""
+	if refund > 0:
+		add_stash(SkillCatalog.CRYSTAL_ID, refund)
 	changed.emit()
 	save_game()
 	return "ok"
@@ -218,15 +391,17 @@ func try_comprehend(core_id: String, inventory = null, from_stash: bool = false)
 
 func learned_stat_dict() -> Dictionary:
 	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	var out: Dictionary = {}
 	for cid in learned_skills.keys():
 		if int(learned_skills[cid]) <= 0:
 			continue
+		var sid := SkillCatalog.migrate_id(str(cid))
+		out[sid] = true
 		out[str(cid)] = true
 	for rid in learned_runes.keys():
 		if bool(learned_runes[rid]):
 			out[str(rid)] = true
-			## 旧符文 ID 映射到晶核属性
 			match str(rid):
 				"rune_a_toughbone":
 					out["core_a_toughbone"] = true
@@ -237,24 +412,44 @@ func learned_stat_dict() -> Dictionary:
 				"rune_a_cruel":
 					out["core_a_cruel"] = true
 				"rune_s_chain":
-					out["core_s_chain"] = true
+					out["sk_chain"] = true
 				"rune_s_quake":
-					out["core_s_quake"] = true
-	for cid in out.keys():
-		if not CrystalCatalog.has_id(str(cid)) and not str(cid).begins_with("rune_"):
-			pass
+					out["sk_quake"] = true
+				"rune_s_cloudstep":
+					out["sk_dash"] = true
+				"rune_s_ironwall":
+					out["sk_ironwall"] = true
 	return out
 
 
 func grant_arena_skills() -> void:
 	## 战斗场临时解锁，不写盘
-	if not has_learned_skill("core_s_quake"):
-		learned_skills["core_s_quake"] = 1
-	if not has_learned_skill("core_s_bolt"):
-		learned_skills["core_s_bolt"] = 1
+	_ensure_innate_skills(false)
+	if skill_rank("sk_quake") < 1:
+		learned_skills["sk_quake"] = 1
+	if skill_rank("sk_bolt") < 1:
+		learned_skills["sk_bolt"] = 1
+	if str(skill_loadout.get("rmb", "")) == "":
+		skill_loadout["rmb"] = "sk_dash"
 	if str(skill_loadout.get("q", "")) == "":
-		skill_loadout["q"] = "core_s_bolt"
+		skill_loadout["q"] = "sk_bolt"
+	if str(skill_loadout.get("e", "")) == "":
+		skill_loadout["e"] = "sk_quake"
 	changed.emit()
+
+
+func _ensure_innate_skills(persist: bool = true) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var dirty := false
+	for sid in SkillCatalog.INNATE_IDS:
+		if skill_rank(sid) < 1:
+			learned_skills[sid] = 1
+			dirty = true
+	if str(skill_loadout.get("rmb", "")) == "" and skill_rank("sk_dash") > 0:
+		skill_loadout["rmb"] = "sk_dash"
+		dirty = true
+	if dirty and persist:
+		save_game()
 
 
 func advance_day() -> void:
@@ -430,6 +625,8 @@ func buy_erosion_ward(count: int = 1) -> String:
 func sell_stash_material(mat_id: String, count: int = 1) -> String:
 	if not MaterialCatalog.MATERIALS.has(mat_id):
 		return "unknown"
+	if mat_id == "crystal_core":
+		return "locked"
 	if stash_count(mat_id) < count:
 		return "no_item"
 	var price := MaterialCatalog.sell_price(mat_id) * count
@@ -618,10 +815,14 @@ func try_absorb_mind() -> String:
 
 
 func can_afford_mind(n: int) -> bool:
+	if _skill_sandbox_active:
+		return true
 	return mind_value >= n
 
 
 func consume_mind_value(n: int, persist: bool = true) -> bool:
+	if _skill_sandbox_active:
+		return true
 	if n <= 0:
 		return true
 	if mind_value < n:
@@ -816,6 +1017,43 @@ func from_dict(data: Dictionary) -> void:
 	unspent_points = maxi(0, int(data.get("unspent_points", 0)))
 	quest_kill_progress = maxi(0, int(data.get("quest_kill_progress", 0)))
 	_ensure_equipment()
+	_migrate_skill_progress()
+
+
+func _migrate_skill_progress() -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+	var converted := {}
+	for old_id in learned_skills.keys():
+		var sid := SkillCatalog.migrate_id(str(old_id))
+		var rk := int(learned_skills[old_id])
+		if sid == str(old_id):
+			converted[sid] = maxi(int(converted.get(sid, 0)), rk)
+			continue
+		converted[sid] = maxi(int(converted.get(sid, 0)), rk)
+	for old_id in learned_runes.keys():
+		if not bool(learned_runes[old_id]):
+			continue
+		var sid := SkillCatalog.migrate_id(str(old_id))
+		if SkillCatalog.has_id(sid):
+			converted[sid] = maxi(int(converted.get(sid, 0)), 1)
+	learned_skills = converted
+	var new_loadout := {"rmb": "", "q": "", "e": "", "r": "", "f": "", "c": ""}
+	for slot in SkillCatalog.HOTKEY_SLOTS:
+		var sid := SkillCatalog.migrate_id(str(skill_loadout.get(slot, "")))
+		if sid != "" and SkillCatalog.is_active(sid) and skill_rank(sid) > 0:
+			new_loadout[slot] = sid
+	skill_loadout = new_loadout
+	var crystal_add := 0
+	var stash_keys: Array = stash.keys()
+	for mid in stash_keys:
+		var sid := str(mid)
+		if CrystalCatalog.is_skill(sid) or SkillCatalog.LEGACY_SKILL_MAP.has(sid):
+			crystal_add += int(stash[mid]) * 2
+			stash.erase(mid)
+	if crystal_add > 0:
+		stash[SkillCatalog.CRYSTAL_ID] = stash_count(SkillCatalog.CRYSTAL_ID) + crystal_add
+	_ensure_innate_skills(false)
 
 
 func slot_path(slot: int) -> String:
@@ -909,10 +1147,11 @@ func reset_progress(with_starter: bool = true) -> void:
 			"alchem_slag": 4,
 			"beast_scale": 3,
 			"glow_moss": 2,
-			"core_s_chain": 1,
+			"crystal_core": 8,
 			"item_bag_expand": 1,
 		}
 		mind_value = mind_value_max()
+		_ensure_innate_skills(false)
 
 
 func new_game(slot: int) -> bool:
@@ -971,6 +1210,8 @@ func ensure_session_loaded() -> bool:
 
 
 func save_game() -> void:
+	if _skill_sandbox_active:
+		return
 	if not is_valid_slot(active_slot):
 		return
 	_ensure_saves_dir()

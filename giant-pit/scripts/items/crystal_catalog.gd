@@ -159,26 +159,6 @@ const DEFS := {
 
 const HOTKEY_SLOTS := ["rmb", "q", "e", "r", "f", "c"]
 
-const ENEMY_CORE := {
-	"a_moss_grub": "core_s_chain",
-	"a_spore": "core_s_quake",
-	"a_scale": "core_s_chain",
-	"b_mite": "core_s_dash",
-	"b_beetle": "core_s_dash",
-	"b_slag": "core_s_quake",
-	"c_wisp": "core_s_bolt",
-	"c_grub": "core_s_bolt",
-	"c_shell": "core_s_bolt",
-	"elite_a": "core_s_whirl",
-	"elite_b": "core_s_whirl",
-	"elite_c": "core_s_whirl",
-	"special_a": "core_s_whirl",
-	"guard_a": "core_s_chain",
-	"guard_b": "core_s_dash",
-	"guard_c": "core_s_bolt",
-	"boss_floor1": "core_s_smash",
-}
-
 const ATTR_POOL_LOW := ["core_a_toughbone", "core_a_heavyarm"]
 const ATTR_POOL_HIGH := ["core_a_sharpeye", "core_a_cruel"]
 
@@ -229,14 +209,9 @@ static func cast_cost(core_id: String) -> int:
 	return int(def(core_id).get("cast_cost", 0))
 
 
-static func skill_drop_chance(enemy_id: String, is_boss: bool = false) -> float:
-	if is_boss or enemy_id == "boss_floor1":
-		return 0.35
-	if enemy_id.begins_with("elite_") or enemy_id.begins_with("special_"):
-		return 0.18 if enemy_id.begins_with("special_") else 0.12
-	if enemy_id.begins_with("guard_"):
-		return 0.08
-	return 0.02
+static func skill_drop_chance(_enemy_id: String, _is_boss: bool = false) -> float:
+	## 技能不再掉专属核；通用晶核掉率见 SkillCatalog.crystal_drop_chance。
+	return 0.0
 
 
 static func attr_drop_chance(enemy_id: String, is_boss: bool = false) -> float:
@@ -298,14 +273,14 @@ static func display_with_tier(core_id: String, inst_grade: int = -1, inst_qualit
 
 
 static func roll_drop_grade(enemy_id: String, is_boss: bool = false) -> int:
-	var base := grade(drop_skill_core(enemy_id, is_boss))
+	var base := 2
 	if is_boss or enemy_id == "boss_floor1":
-		return ItemTier.clamp_grade(base + randi_range(0, 2))
+		return ItemTier.clamp_grade(base + randi_range(2, 4))
 	if enemy_id.begins_with("special_"):
-		return ItemTier.clamp_grade(base + randi_range(0, 1))
+		return ItemTier.clamp_grade(base + randi_range(1, 3))
 	if enemy_id.begins_with("elite_") or enemy_id.begins_with("guard_"):
-		return ItemTier.clamp_grade(base + randi_range(-1, 1))
-	return ItemTier.clamp_grade(mini(base, randi_range(1, 3)))
+		return ItemTier.clamp_grade(base + randi_range(0, 2))
+	return ItemTier.clamp_grade(randi_range(1, 3))
 
 
 static func roll_drop_quality(enemy_id: String, is_boss: bool = false) -> int:
@@ -316,10 +291,8 @@ static func roll_drop_quality(enemy_id: String, is_boss: bool = false) -> int:
 	return ItemTier.Tier.UNCOMMON if randf() < 0.15 else ItemTier.Tier.COMMON
 
 
-static func drop_skill_core(enemy_id: String, is_boss: bool = false) -> String:
-	if is_boss or enemy_id == "boss_floor1":
-		return "core_s_smash"
-	return str(ENEMY_CORE.get(enemy_id, "core_s_chain"))
+static func drop_skill_core(_enemy_id: String, _is_boss: bool = false) -> String:
+	return ""
 
 
 static func roll_attr_core(high: bool) -> String:

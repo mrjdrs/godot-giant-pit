@@ -200,6 +200,7 @@ func _build_hub() -> void:
 	_add_facility("spotlight", Vector2(120, 60), "res://assets/props/side/spotlight.png")
 	_add_facility("awaken", Vector2(0, 80), "res://assets/tiles/hub/hub_alchemy.png")
 	_add_facility("comprehend", Vector2(-160, 40), "res://assets/tiles/hub/hub_quiet_door.png")
+	_add_facility("dummy", Vector2(-80, 80), "res://assets/enemies/side/dummy_post.png")
 	_add_facility("pit", Vector2(80, 80), "res://assets/tiles/hub/hub_pit_mouth.png")
 
 	if _atmosphere and _atmosphere.has_method("add_glow"):
@@ -263,6 +264,8 @@ func _add_facility(id: String, pos: Vector2, icon: String) -> void:
 	spr.name = "Sprite"
 	spr.texture = load(icon)
 	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	if id == "dummy":
+		spr.scale = Vector2(0.85, 0.85)
 	area.add_child(spr)
 	var cs := CollisionShape2D.new()
 	var circle := CircleShape2D.new()
@@ -337,6 +340,8 @@ func _on_facility(facility_id: String, _by: Node) -> void:
 			_open_awaken()
 		"comprehend":
 			_open_comprehend()
+		"dummy":
+			_open_dummy()
 		"pit":
 			_open_pit()
 
@@ -508,6 +513,19 @@ func _open_exchange() -> void:
 	btn_b.disabled = MetaProgress.paper_note_count() < 1
 	btn_c.disabled = not MetaProgress.can_afford_gold(MetaProgress.MIND_POTION_PRICE)
 	_layout_panel_buttons(true, true, true)
+
+
+func _open_dummy() -> void:
+	_mode = "dummy"
+	_show_text_panel()
+	panel_title.text = Loc.t("facility.dummy")
+	panel_body.text = Loc.t("hub.enter_dummy")
+	btn_a.text = Loc.t("hub.enter_training")
+	btn_a.visible = true
+	btn_a.disabled = false
+	btn_b.visible = false
+	btn_c.visible = false
+	_layout_panel_buttons(true, false, false)
 
 
 func _open_pit() -> void:
@@ -744,6 +762,8 @@ func _on_btn_a() -> void:
 			var ar := MetaProgress.try_awaken("whirl")
 			_toast_awaken(ar)
 			_open_awaken()
+		"dummy":
+			_enter_dummy()
 		"pit":
 			_enter_pit("")
 
@@ -855,6 +875,10 @@ func _open_comprehend() -> void:
 		sheet_host.toggle_skills()
 
 
+func _enter_dummy() -> void:
+	get_tree().change_scene_to_file("res://scenes/hub/training_dummy.tscn")
+
+
 func _enter_pit(spawn_id: String = "") -> void:
 	RunSession.begin_run(spawn_id)
 	get_tree().change_scene_to_file("res://scenes/pit/pit_floor_01.tscn")
@@ -895,6 +919,8 @@ func _sell_selected_stash() -> void:
 	var r := MetaProgress.sell_stash_material(item_id, 1)
 	if r == "ok":
 		_toast(Loc.t("hub.sell_ok", [MaterialCatalog.display_name(item_id), MaterialCatalog.sell_price(item_id)]))
+	elif r == "locked":
+		_toast(Loc.t("hub.sell_crystal_locked") if Loc.has_key("hub.sell_crystal_locked") else "晶核不能出售，请到感悟台学习技能")
 	elif r == "no_item":
 		_toast(Loc.t("hub.sell_none"))
 	else:

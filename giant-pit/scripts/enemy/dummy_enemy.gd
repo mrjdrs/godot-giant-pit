@@ -1,12 +1,12 @@
 extends CharacterBody2D
 
-const MAX_HP := 100.0
+@export var max_hp: float = 100.0
 
 @onready var sprite: Sprite2D = $Sprite
 @onready var hurtbox: Area2D = $Hurtbox
 @onready var hp_label: Label = $HPLabel
 
-var hp: float = MAX_HP
+var hp: float = 100.0
 var flash_timer: float = 0.0
 var knockback_velocity: Vector2 = Vector2.ZERO
 
@@ -14,6 +14,7 @@ var knockback_velocity: Vector2 = Vector2.ZERO
 func _ready() -> void:
 	collision_layer = 4
 	collision_mask = 1
+	hp = max_hp
 	if sprite:
 		sprite.scale = Vector2(0.7, 0.7)
 	hurtbox.configure_layers(16)
@@ -56,7 +57,7 @@ func _on_hurt(hitbox: Area2D) -> void:
 
 
 func _reset_dummy() -> void:
-	hp = MAX_HP
+	hp = max_hp
 	flash_timer = 0.0
 	sprite.modulate = Color.WHITE
 	knockback_velocity = Vector2.ZERO
@@ -65,4 +66,4 @@ func _reset_dummy() -> void:
 
 
 func _update_hp_label() -> void:
-	hp_label.text = "%d/%d" % [int(hp), int(MAX_HP)]
+	hp_label.text = "%d/%d" % [int(hp), int(max_hp)]

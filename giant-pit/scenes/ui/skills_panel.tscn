@@ -1,146 +1,19 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=2 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/skills_panel.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/ui/item_slot_grid.gd" id="2"]
-[ext_resource type="Texture2D" path="res://assets/ui/chrome/ui_btn_close.png" id="3"]
 
 [node name="SkillsPanel" type="Control"]
-custom_minimum_size = Vector2(560, 440)
+custom_minimum_size = Vector2(760, 520)
 layout_mode = 3
 anchors_preset = 8
 anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -280.0
-offset_top = -220.0
-offset_right = 280.0
-offset_bottom = 220.0
+offset_left = -380.0
+offset_top = -260.0
+offset_right = 380.0
+offset_bottom = 260.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1")
-
-[node name="PanelBg" type="Panel" parent="."]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="Title" type="Label" parent="."]
-layout_mode = 0
-offset_left = 16.0
-offset_top = 12.0
-offset_right = 500.0
-offset_bottom = 40.0
-theme_override_colors/font_color = Color(0.95, 0.9, 0.75, 1)
-theme_override_font_sizes/font_size = 18
-horizontal_alignment = 1
-vertical_alignment = 1
-text = "技能学习"
-
-[node name="CloseBtn" type="TextureButton" parent="."]
-layout_mode = 0
-offset_left = 520.0
-offset_top = 10.0
-offset_right = 548.0
-offset_bottom = 38.0
-texture_normal = ExtResource("3")
-ignore_texture_size = true
-stretch_mode = 5
-
-[node name="SkillSlots" type="HBoxContainer" parent="."]
-layout_mode = 0
-offset_left = 24.0
-offset_top = 48.0
-offset_right = 536.0
-offset_bottom = 108.0
-theme_override_constants/separation = 6
-alignment = 1
-
-[node name="TabRow" type="HBoxContainer" parent="."]
-layout_mode = 0
-offset_left = 24.0
-offset_top = 114.0
-offset_right = 536.0
-offset_bottom = 142.0
-theme_override_constants/separation = 8
-
-[node name="TabSkill" type="Button" parent="TabRow"]
-custom_minimum_size = Vector2(96, 28)
-layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "技能符文"
-
-[node name="TabAttr" type="Button" parent="TabRow"]
-custom_minimum_size = Vector2(96, 28)
-layout_mode = 2
-theme_override_font_sizes/font_size = 13
-text = "属性符文"
-
-[node name="Body" type="HBoxContainer" parent="."]
-layout_mode = 0
-offset_left = 24.0
-offset_top = 150.0
-offset_right = 536.0
-offset_bottom = 404.0
-theme_override_constants/separation = 12
-
-[node name="GridScroll" type="ScrollContainer" parent="Body"]
-custom_minimum_size = Vector2(248, 0)
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-horizontal_scroll_mode = 0
-
-[node name="RuneGrid" type="GridContainer" parent="Body/GridScroll"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/h_separation = 6
-theme_override_constants/v_separation = 6
-columns = 4
-script = ExtResource("2")
-slot_count = 8
-columns_count = 4
-slot_size = Vector2(48, 48)
-selectable = true
-use_chrome = true
-
-[node name="RightCol" type="VBoxContainer" parent="Body"]
-custom_minimum_size = Vector2(240, 0)
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_vertical = 3
-theme_override_constants/separation = 10
-
-[node name="DetailPanel" type="Panel" parent="Body/RightCol"]
-layout_mode = 2
-size_flags_vertical = 3
-
-[node name="DetailIcon" type="TextureRect" parent="Body/RightCol/DetailPanel"]
-layout_mode = 0
-offset_left = 10.0
-offset_top = 10.0
-offset_right = 58.0
-offset_bottom = 58.0
-expand_mode = 1
-stretch_mode = 5
-texture_filter = 1
-
-[node name="DetailText" type="Label" parent="Body/RightCol/DetailPanel"]
-layout_mode = 0
-offset_left = 70.0
-offset_top = 8.0
-offset_right = 228.0
-offset_bottom = 220.0
-theme_override_font_sizes/font_size = 13
-autowrap_mode = 3
-text = "选择背包中的符文，消耗念力值学习。"
-
-[node name="LearnBtn" type="Button" parent="Body/RightCol"]
-custom_minimum_size = Vector2(0, 36)
-layout_mode = 2
-theme_override_font_sizes/font_size = 14
-text = "学习"

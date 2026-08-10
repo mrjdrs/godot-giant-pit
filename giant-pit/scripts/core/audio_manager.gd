@@ -1,8 +1,11 @@
 extends Node
 ## 简易音效 / BGM 管理。武器族走对应挥击声。
 
+const SFX_VOICES := 8
+
 var _bgm: AudioStreamPlayer
-var _sfx: AudioStreamPlayer
+var _sfx_players: Array[AudioStreamPlayer] = []
+var _sfx_cursor: int = 0
 var _chop_stream: AudioStreamWAV
 
 
@@ -11,10 +14,12 @@ func _ready() -> void:
 	_bgm.bus = "Master"
 	_bgm.volume_db = -12.0
 	add_child(_bgm)
-	_sfx = AudioStreamPlayer.new()
-	_sfx.bus = "Master"
-	_sfx.volume_db = -4.0
-	add_child(_sfx)
+	for _i in SFX_VOICES:
+		var p := AudioStreamPlayer.new()
+		p.bus = "Master"
+		p.volume_db = -4.0
+		add_child(p)
+		_sfx_players.append(p)
 
 
 func play_bgm(path: String = "res://assets/audio/bgm_pit.wav") -> void:
@@ -39,15 +44,34 @@ func play_sfx(path: String) -> void:
 	var stream: AudioStream = load(path)
 	if stream == null:
 		return
-	_sfx.stream = stream
-	_sfx.play()
+	_play_stream_now(stream)
 
 
 func play_stream(stream: AudioStream) -> void:
+	_play_stream_now(stream)
+
+
+func _ensure_sfx_pool() -> void:
+	if not _sfx_players.is_empty():
+		return
+	for _i in SFX_VOICES:
+		var p := AudioStreamPlayer.new()
+		p.bus = "Master"
+		p.volume_db = -4.0
+		add_child(p)
+		_sfx_players.append(p)
+
+
+func _play_stream_now(stream: AudioStream) -> void:
 	if stream == null:
 		return
-	_sfx.stream = stream
-	_sfx.play()
+	_ensure_sfx_pool()
+	if _sfx_players.is_empty():
+		return
+	var p: AudioStreamPlayer = _sfx_players[_sfx_cursor]
+	_sfx_cursor = (_sfx_cursor + 1) % _sfx_players.size()
+	p.stream = stream
+	p.play()
 
 
 func sfx_blade() -> void:

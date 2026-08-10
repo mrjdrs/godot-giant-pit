@@ -98,6 +98,12 @@ const MATERIALS := {
 		"stack": 99,
 		"tier": ItemTier.Tier.RARE,
 	},
+	"crystal_core": {
+		"name_key": "mat.crystal_core",
+		"icon": "res://assets/materials/mat_crystal_core.png",
+		"stack": 99,
+		"tier": ItemTier.Tier.RARE,
+	},
 }
 
 

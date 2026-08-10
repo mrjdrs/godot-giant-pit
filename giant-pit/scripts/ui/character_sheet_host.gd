@@ -9,6 +9,7 @@ signal panel_opened(which: String)
 signal panel_closed
 
 var hub_mode: bool = false
+var training_mode: bool = false
 var _player: Node = null
 var stats_panel: Control
 var bag_panel: Control
@@ -33,12 +34,13 @@ func _ready() -> void:
 		bag_panel.request_refresh.connect(_refresh_all)
 
 
-func bind_player(p: Node, p_hub_mode: bool = false) -> void:
+func bind_player(p: Node, p_hub_mode: bool = false, p_training: bool = false) -> void:
 	_player = p
 	hub_mode = p_hub_mode
+	training_mode = p_training
 	stats_panel.bind_player(p)
 	bag_panel.bind_player(p, hub_mode)
-	skills_panel.bind_player(p, hub_mode)
+	skills_panel.bind_player(p, hub_mode, training_mode)
 
 
 func is_blocking() -> bool:

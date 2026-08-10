@@ -2,6 +2,7 @@ extends Control
 ## 火炬之光 2 式底栏：左血球、中技能槽、右侵蚀球。
 
 const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 
 const SLOTS := ["rmb", "q", "e", "r", "f", "c"]
 const LABELS := ["RMB", "Q", "E", "R", "F", "C"]
@@ -426,7 +427,11 @@ func _process(_delta: float) -> void:
 		if _player.has_method("skill_in_slot"):
 			core_id = str(_player.skill_in_slot(slot_id))
 		var icon: TextureRect = panel.get_node("Icon")
-		var path := CrystalCatalog.icon_path(core_id)
+		var path := ""
+		if SkillCatalog.has_id(core_id):
+			path = SkillCatalog.fallback_icon(core_id)
+		else:
+			path = CrystalCatalog.icon_path(core_id)
 		if path != "" and ResourceLoader.exists(path):
 			icon.texture = load(path)
 			icon.modulate = Color.WHITE
@@ -444,8 +449,11 @@ func _process(_delta: float) -> void:
 			locked = bool(_player.is_skill_slot_locked(slot_id))
 		var cost := 0
 		if core_id != "":
-			cost = CrystalCatalog.cast_cost(core_id)
-		var no_mind := cost > 0 and MetaProgress.mind_value < cost
+			if SkillCatalog.has_id(core_id):
+				cost = SkillCatalog.cast_cost(core_id, MetaProgress.skill_rank(core_id))
+			else:
+				cost = CrystalCatalog.cast_cost(core_id)
+		var no_mind := cost > 0 and not MetaProgress.is_skill_sandbox_active() and MetaProgress.mind_value < cost
 		if locked:
 			panel.modulate = Color(0.45, 0.42, 0.4, 1)
 		elif no_mind:

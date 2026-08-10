@@ -2,6 +2,7 @@ extends RefCounted
 ## 已感悟技能。真源在 MetaProgress.learned_skills + skill_loadout。
 
 const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 
 signal changed
 
@@ -21,6 +22,9 @@ const SLOT_ICONS := {
 	"f": "res://assets/ui/icons/skills/skill_slot_dodge.png",
 	"c": "res://assets/ui/icons/skills/skill_slot_passive.png",
 }
+
+## 试刀场设为 false，装配不写盘。
+var persist_slots: bool = true
 
 
 func has(core_id: String) -> bool:
@@ -51,19 +55,33 @@ func try_comprehend(core_id: String, inventory = null, from_stash: bool = false)
 	return r
 
 
+func try_forget(skill_id: String) -> String:
+	var r := MetaProgress.try_forget(skill_id)
+	if r == "ok":
+		changed.emit()
+	return r
+
+
 func try_learn(core_id: String, inventory = null, from_stash: bool = false, _brand_quality: String = "iron") -> String:
 	return try_comprehend(core_id, inventory, from_stash)
 
 
 func assign_slot(slot: String, core_id: String) -> String:
-	var r := MetaProgress.assign_skill_slot(slot, core_id)
+	var r := MetaProgress.assign_skill_slot(slot, core_id, persist_slots)
 	if r == "ok":
 		changed.emit()
 	return r
 
 
 func cycle_slot(slot: String) -> String:
-	var r := MetaProgress.cycle_skill_slot(slot)
+	var r := MetaProgress.cycle_skill_slot(slot, persist_slots)
+	if r == "ok":
+		changed.emit()
+	return r
+
+
+func set_rank_sandbox(skill_id: String, rank: int) -> String:
+	var r := MetaProgress.set_skill_rank_sandbox(skill_id, rank)
 	if r == "ok":
 		changed.emit()
 	return r

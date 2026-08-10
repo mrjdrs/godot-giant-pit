@@ -3,6 +3,7 @@ extends CharacterBody2D
 
 const PickupScene = preload("res://scenes/items/pickup.tscn")
 const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
+const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 const ProjectileScene = preload("res://scenes/combat/enemy_projectile.tscn")
 
 signal died_with_id(enemy_id: String, meta: Dictionary)
@@ -311,18 +312,14 @@ func _spawn_drops() -> void:
 	var luck_bonus := 0.0
 	if Engine.get_main_loop() != null:
 		luck_bonus = float(MetaProgress.attr_value("luk")) * 0.005
-	if randf() < CrystalCatalog.skill_drop_chance(enemy_id, is_boss) + luck_bonus:
-		var core_id := CrystalCatalog.drop_skill_core(enemy_id, is_boss)
-		if core_id != "":
-			var core := PickupScene.instantiate()
-			parent.add_child(core)
-			core.global_position = global_position + Vector2(randf_range(-18, 18), randf_range(-14, 14))
-			core.setup(
-				2, core_id, 1,
-				CrystalCatalog.roll_drop_grade(enemy_id, is_boss),
-				CrystalCatalog.roll_drop_quality(enemy_id, is_boss)
-			)
-			GameBus.pub("core_dropped", {"core_id": core_id, "pos": core.global_position})
+	if randf() < SkillCatalog.crystal_drop_chance(enemy_id, is_boss) + luck_bonus:
+		var n := SkillCatalog.crystal_drop_count(enemy_id, is_boss)
+		if n > 0:
+			var crystal := PickupScene.instantiate()
+			parent.add_child(crystal)
+			crystal.global_position = global_position + Vector2(randf_range(-18, 18), randf_range(-14, 14))
+			crystal.setup(0, SkillCatalog.CRYSTAL_ID, n) ## MATERIAL 通用晶核
+			GameBus.pub("core_dropped", {"core_id": SkillCatalog.CRYSTAL_ID, "count": n, "pos": crystal.global_position})
 	if randf() < CrystalCatalog.attr_drop_chance(enemy_id, is_boss) + luck_bonus:
 		var attr_id := CrystalCatalog.roll_attr_core(is_elite or is_boss or is_special)
 		if attr_id != "":
