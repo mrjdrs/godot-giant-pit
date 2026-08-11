@@ -3,6 +3,7 @@ extends Area2D
 ## - crescent：冷兵器刃气月牙
 ## - tracer：火铳细曳光（短亮、直线、青白芯）
 ## - flame：焰咒火球（大体积、脉动、余烬拖尾、略摆）
+## - shard：冰棱 / acid_blob：酸滴 / shadow_bolt：暗影 / light_beam：圣光
 
 var velocity: Vector2 = Vector2.ZERO
 var damage: float = 10.0
@@ -17,6 +18,8 @@ var _col: Color = Color(1.0, 0.92, 0.62, 1.0)
 var _shape: String = "crescent"
 var _trail: Line2D = null
 var _ember_cd: float = 0.0
+var _arc_gravity: float = 0.0
+var _arc_vel: Vector2 = Vector2.ZERO
 
 
 func setup(p_velocity: Vector2, p_damage: float, p_source: Node2D, p_knock: float = 80.0, p_pierce: int = 1, p_col: Color = Color(1.0, 0.92, 0.62, 1.0), p_shape: String = "crescent") -> void:
@@ -30,10 +33,18 @@ func setup(p_velocity: Vector2, p_damage: float, p_source: Node2D, p_knock: floa
 	_shape = p_shape
 	rotation = velocity.angle()
 	match _shape:
-		"tracer":
-			lifetime = 0.55
+		"tracer", "light_beam":
+			lifetime = 0.55 if _shape == "tracer" else 0.45
 		"flame":
 			lifetime = 0.95
+		"shard":
+			lifetime = 1.05
+		"acid_blob":
+			lifetime = 1.2
+			_arc_gravity = 520.0
+			_arc_vel = p_velocity
+		"shadow_bolt":
+			lifetime = 0.85
 		"orb":
 			lifetime = 0.85
 		_:
@@ -52,10 +63,12 @@ func _ready() -> void:
 		var cs := CollisionShape2D.new()
 		var rect := RectangleShape2D.new()
 		match _shape:
-			"tracer":
-				rect.size = Vector2(22, 4)
-			"flame", "orb":
+			"tracer", "light_beam":
+				rect.size = Vector2(22 if _shape == "tracer" else 28, 4 if _shape == "tracer" else 6)
+			"flame", "orb", "acid_blob":
 				rect.size = Vector2(16, 16)
+			"shard", "shadow_bolt":
+				rect.size = Vector2(18, 10)
 			_:
 				rect.size = Vector2(22, 12)
 		cs.shape = rect
@@ -71,11 +84,11 @@ func _ready() -> void:
 		_trail.points = PackedVector2Array([
 			Vector2(8, 0), Vector2(-6, 0), Vector2(-16, 0), Vector2(-28, 0), Vector2(-40, 0),
 		])
-	elif _shape == "flame":
+	elif _shape in ["flame", "shard", "shadow_bolt", "light_beam", "acid_blob"]:
 		_trail = Line2D.new()
 		_trail.z_index = -1
-		_trail.width = 7.0
-		_trail.default_color = Color(1.0, 0.45, 0.2, 0.45)
+		_trail.width = 7.0 if _shape == "flame" else 4.0
+		_trail.default_color = Color(_col.r, _col.g, _col.b, 0.42)
 		_trail.begin_cap_mode = Line2D.LINE_CAP_ROUND
 		_trail.end_cap_mode = Line2D.LINE_CAP_ROUND
 		add_child(_trail)
@@ -152,6 +165,52 @@ func _apply_visual() -> void:
 			core.polygon = PackedVector2Array([
 				Vector2(-2, -2), Vector2(3, -2), Vector2(3, 2), Vector2(-2, 2),
 			])
+		"shard":
+			vis.color = Color(0.65, 0.88, 1.0, 1.0)
+			vis.polygon = PackedVector2Array([
+				Vector2(-10, 0), Vector2(4, -7), Vector2(12, 0), Vector2(4, 7),
+			])
+			glow.color = Color(0.75, 0.95, 1.0, 0.35)
+			glow.polygon = PackedVector2Array([
+				Vector2(-12, 0), Vector2(2, -9), Vector2(14, 0), Vector2(2, 9),
+			])
+			core.visible = true
+			core.color = Color(1.0, 1.0, 1.0, 0.9)
+			core.polygon = PackedVector2Array([Vector2(-2, -2), Vector2(6, 0), Vector2(-2, 2)])
+		"acid_blob":
+			vis.color = Color(0.5, 0.92, 0.18, 1.0)
+			vis.polygon = PackedVector2Array([
+				Vector2(-6, -5), Vector2(2, -8), Vector2(8, -2), Vector2(6, 6), Vector2(-4, 5), Vector2(-8, 0),
+			])
+			glow.color = Color(0.65, 1.0, 0.25, 0.35)
+			glow.polygon = PackedVector2Array([
+				Vector2(-9, -7), Vector2(3, -11), Vector2(11, -3), Vector2(8, 8), Vector2(-6, 7), Vector2(-11, 0),
+			])
+			core.visible = false
+		"shadow_bolt":
+			vis.color = Color(0.4, 0.12, 0.65, 1.0)
+			vis.polygon = PackedVector2Array([
+				Vector2(-12, -2), Vector2(14, -1.5), Vector2(16, 0), Vector2(14, 1.5), Vector2(-12, 2),
+			])
+			glow.color = Color(0.55, 0.18, 0.85, 0.35)
+			glow.polygon = PackedVector2Array([
+				Vector2(-16, -4), Vector2(16, -3), Vector2(18, 0), Vector2(16, 3), Vector2(-16, 4),
+			])
+			core.visible = true
+			core.color = Color(0.25, 0.08, 0.4, 0.95)
+			core.polygon = PackedVector2Array([Vector2(-4, -1), Vector2(10, 0), Vector2(-4, 1)])
+		"light_beam":
+			vis.color = Color(1.0, 0.94, 0.55, 1.0)
+			vis.polygon = PackedVector2Array([
+				Vector2(-6, -2), Vector2(18, -1.2), Vector2(20, 0), Vector2(18, 1.2), Vector2(-6, 2),
+			])
+			glow.color = Color(1.0, 0.98, 0.75, 0.4)
+			glow.polygon = PackedVector2Array([
+				Vector2(-8, -4), Vector2(22, -2.5), Vector2(24, 0), Vector2(22, 2.5), Vector2(-8, 4),
+			])
+			core.visible = true
+			core.color = Color(1.0, 1.0, 0.95, 1.0)
+			core.polygon = PackedVector2Array([Vector2(0, -0.8), Vector2(16, 0), Vector2(0, 0.8)])
 		_:
 			vis.color = _col
 			vis.polygon = PackedVector2Array([
@@ -167,10 +226,11 @@ func _apply_visual() -> void:
 func _physics_process(delta: float) -> void:
 	_alive += delta
 	if _alive >= lifetime:
+		if _shape == "acid_blob":
+			set_meta("splash", true)
 		queue_free()
 		return
 	if _shape == "flame":
-		## 轻微摆动飞行，区别于直线枪弹
 		var side := Vector2(-velocity.normalized().y, velocity.normalized().x)
 		position += velocity * delta + side * sin(_alive * 14.0) * 28.0 * delta
 		rotation = velocity.angle() + sin(_alive * 10.0) * 0.25
@@ -185,6 +245,32 @@ func _physics_process(delta: float) -> void:
 		if _ember_cd <= 0.0:
 			_ember_cd = 0.045
 			_spawn_ember()
+	elif _shape == "acid_blob":
+		_arc_vel.y += _arc_gravity * delta
+		position += _arc_vel * delta
+		rotation = _arc_vel.angle()
+		if _trail:
+			_trail.default_color = Color(_col.r, _col.g, _col.b, 0.45 * (1.0 - _alive / lifetime))
+	elif _shape == "shard":
+		position += velocity * delta
+		rotation = velocity.angle()
+		scale = Vector2.ONE * (1.0 + 0.06 * sin(_alive * 20.0))
+		if _trail:
+			_trail.default_color = Color(_col.r, _col.g, _col.b, 0.4 * (1.0 - _alive / lifetime))
+	elif _shape == "shadow_bolt":
+		position += velocity * delta
+		rotation = velocity.angle()
+		if _trail:
+			var pts2 := PackedVector2Array()
+			for i in 5:
+				pts2.append(Vector2(-float(i) * 6.0, sin(_alive * 10.0 + float(i)) * 2.0))
+			_trail.points = pts2
+			_trail.default_color = Color(0.45, 0.12, 0.75, 0.5 * (1.0 - _alive / lifetime))
+	elif _shape == "light_beam":
+		position += velocity * delta
+		rotation = velocity.angle()
+		if _trail:
+			_trail.default_color = Color(1.0, 0.95, 0.6, 0.55 * (1.0 - _alive / lifetime))
 	elif _shape == "orb":
 		position += velocity * delta
 		rotation = velocity.angle()

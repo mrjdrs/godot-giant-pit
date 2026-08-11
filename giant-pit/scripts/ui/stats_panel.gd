@@ -295,7 +295,10 @@ func refresh() -> void:
 	_set_row("Int", "icon_mind_lv", Loc.t("stat.int"), "%.0f" % st.intellect, true)
 	_set_row("Spi", "icon_mind", Loc.t("stat.spirit"), "%.0f" % st.spirit, true)
 	_set_row("Luk", "icon_critdmg", Loc.t("stat.luck"), "%.0f" % st.luck, true)
-	_set_row("Patk", "icon_patk", Loc.t("stat.patk"), "%.1f / %.1f" % [st.patk, st.pdef], true)
+	if SkillCatalog.is_mage_imprint(MetaProgress.imprint_family):
+		_set_row("Patk", "icon_patk", Loc.t("stat.matk"), "%.1f / %.1f" % [st.matk, st.pdef], true)
+	else:
+		_set_row("Patk", "icon_patk", Loc.t("stat.patk"), "%.1f / %.1f" % [st.patk, st.pdef], true)
 	_refresh_plus_buttons()
 
 	_set_equip_weapon()

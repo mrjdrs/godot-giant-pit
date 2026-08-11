@@ -317,7 +317,7 @@ func set_imprint_family_sandbox(family: String) -> void:
 	if not _skill_sandbox_active:
 		return
 	var fam := SkillCatalog.normalize_imprint(family)
-	if fam not in [SkillCatalog.FAMILY_COLD, SkillCatalog.FAMILY_HOT, SkillCatalog.FAMILY_MAGE]:
+	if fam not in [SkillCatalog.FAMILY_COLD, SkillCatalog.FAMILY_HOT, SkillCatalog.FAMILY_MAGE, SkillCatalog.FAMILY_AFFINITY]:
 		return
 	imprint_family = fam
 	if not SkillCatalog.is_mage_imprint(fam):
@@ -1227,11 +1227,22 @@ func reset_progress(with_starter: bool = true) -> void:
 
 
 func new_game(slot: int) -> bool:
+	return new_game_with_imprint(slot, "cold_blade", "fire")
+
+
+func new_game_with_imprint(slot: int, imprint: String, element: String = "fire") -> bool:
 	if not is_valid_slot(slot):
 		return false
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	active_slot = slot
 	last_slot = slot
 	reset_progress(true)
+	imprint_family = SkillCatalog.normalize_imprint(imprint)
+	if imprint_family not in [SkillCatalog.FAMILY_COLD, SkillCatalog.FAMILY_HOT, SkillCatalog.FAMILY_MAGE, SkillCatalog.FAMILY_AFFINITY]:
+		imprint_family = SkillCatalog.FAMILY_COLD
+	if SkillCatalog.is_mage_imprint(imprint_family):
+		mage_element = element if element in SkillCatalog.MAGE_ELEMENTS else "fire"
+	_ensure_innate_skills(false)
 	save_game()
 	_save_index()
 	changed.emit()

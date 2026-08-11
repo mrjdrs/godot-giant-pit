@@ -3,11 +3,45 @@ extends Control
 
 const HUB_SCENE := "res://scenes/hub/crane_hub.tscn"
 
-enum View { ROOT, NEW, LOAD }
+enum View { ROOT, NEW, LOAD, IMPRINT }
+
+const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+
+const IMPRINT_OPTIONS := [
+	{
+		"id": SkillCatalog.FAMILY_COLD,
+		"title": "menu.imprint_cold",
+		"desc": "menu.imprint_cold_desc",
+		"portrait": "res://assets/characters/barbarian_cold_weapon.png",
+	},
+	{
+		"id": SkillCatalog.FAMILY_HOT,
+		"title": "menu.imprint_hot",
+		"desc": "menu.imprint_hot_desc",
+		"portrait": "res://assets/characters/officer_hot_weapon.png",
+	},
+	{
+		"id": SkillCatalog.FAMILY_MAGE,
+		"title": "menu.imprint_mage",
+		"desc": "menu.imprint_mage_desc",
+		"portrait": "res://assets/characters/mage_magic_staff.png",
+	},
+	{
+		"id": SkillCatalog.FAMILY_AFFINITY,
+		"title": "menu.imprint_affinity",
+		"desc": "menu.imprint_affinity_desc",
+		"portrait": "res://assets/characters/forest_child_nature.png",
+	},
+]
 
 var _view: View = View.ROOT
+var _pending_slot: int = -1
+var _selected_imprint: String = SkillCatalog.FAMILY_COLD
+var _selected_element: String = "fire"
 var _confirm: Panel = null
 var _slot_list: VBoxContainer = null
+var _imprint_panel: Control = null
+var _element_row: HBoxContainer = null
 var _hint: Label = null
 var _btn_continue: Button = null
 var _btn_new: Button = null
@@ -91,7 +125,10 @@ func _build() -> void:
 	_slot_list.add_theme_constant_override("separation", 8)
 	col.add_child(_slot_list)
 
-	_btn_back = _make_btn(Loc.t("menu.back"), func(): _set_view(View.ROOT))
+	_imprint_panel = _build_imprint_panel()
+	col.add_child(_imprint_panel)
+
+	_btn_back = _make_btn(Loc.t("menu.back"), func(): _on_back_pressed())
 	col.add_child(_btn_back)
 
 	_confirm = Panel.new()
@@ -157,7 +194,8 @@ func _set_view(v: View) -> void:
 	_btn_quit.visible = show_root
 	_btn_continue.disabled = not MetaProgress.has_any_save()
 	_btn_back.visible = not show_root
-	_slot_list.visible = not show_root
+	_slot_list.visible = v == View.NEW or v == View.LOAD
+	_imprint_panel.visible = v == View.IMPRINT
 	match v:
 		View.ROOT:
 			_hint.text = ""
@@ -168,6 +206,9 @@ func _set_view(v: View) -> void:
 		View.LOAD:
 			_hint.text = Loc.t("menu.pick_load")
 			_rebuild_slots(false)
+		View.IMPRINT:
+			_hint.text = Loc.t("menu.pick_imprint")
+			_refresh_imprint_panel()
 
 
 func _clear_slots() -> void:
@@ -261,10 +302,13 @@ func _on_continue() -> void:
 
 
 func _on_new_slot(slot: int, occupied: bool) -> void:
+	_pending_slot = slot
+	_selected_imprint = SkillCatalog.FAMILY_COLD
+	_selected_element = "fire"
 	if occupied:
-		_ask_confirm(Loc.t("menu.confirm_overwrite", [slot]), func(): _enter_slot(slot, true))
+		_ask_confirm(Loc.t("menu.confirm_overwrite", [slot]), func(): _set_view(View.IMPRINT))
 	else:
-		_enter_slot(slot, true)
+		_set_view(View.IMPRINT)
 
 
 func _ask_delete(slot: int) -> void:
@@ -293,5 +337,149 @@ func _enter_slot(slot: int, is_new: bool) -> void:
 		if not MetaProgress.new_game(slot):
 			return
 	elif not MetaProgress.load_slot(slot):
+		return
+	get_tree().change_scene_to_file(HUB_SCENE)
+
+
+func _on_back_pressed() -> void:
+	if _view == View.IMPRINT:
+		_set_view(View.NEW)
+		return
+	_set_view(View.ROOT)
+
+
+func _build_imprint_panel() -> Control:
+	var panel := VBoxContainer.new()
+	panel.visible = false
+	panel.add_theme_constant_override("separation", 10)
+
+	var grid := GridContainer.new()
+	grid.name = "ImprintGrid"
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	panel.add_child(grid)
+
+	for opt in IMPRINT_OPTIONS:
+		grid.add_child(_make_imprint_card(opt))
+
+	var element_wrap := VBoxContainer.new()
+	element_wrap.name = "ElementWrap"
+	element_wrap.add_theme_constant_override("separation", 6)
+	panel.add_child(element_wrap)
+
+	var element_label := Label.new()
+	element_label.name = "ElementLabel"
+	element_label.text = Loc.t("menu.pick_element")
+	element_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	element_label.add_theme_font_size_override("font_size", 13)
+	element_label.add_theme_color_override("font_color", Color(0.78, 0.72, 0.6, 1))
+	element_wrap.add_child(element_label)
+
+	_element_row = HBoxContainer.new()
+	_element_row.name = "ElementRow"
+	_element_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_element_row.add_theme_constant_override("separation", 6)
+	element_wrap.add_child(_element_row)
+	for elem in SkillCatalog.MAGE_ELEMENTS:
+		var btn := Button.new()
+		btn.name = "Element_%s" % elem
+		btn.text = Loc.t("training.element_%s" % elem)
+		btn.custom_minimum_size = Vector2(44, 28)
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.pressed.connect(_on_element_picked.bind(str(elem)))
+		_element_row.add_child(btn)
+
+	var confirm := _make_btn(Loc.t("menu.imprint_confirm"), _confirm_imprint)
+	confirm.custom_minimum_size = Vector2(0, 40)
+	panel.add_child(confirm)
+	return panel
+
+
+func _make_imprint_card(opt: Dictionary) -> Control:
+	var card := PanelContainer.new()
+	card.name = "Card_%s" % str(opt.get("id", ""))
+	card.custom_minimum_size = Vector2(200, 180)
+	var pad := MarginContainer.new()
+	pad.add_theme_constant_override("margin_left", 8)
+	pad.add_theme_constant_override("margin_right", 8)
+	pad.add_theme_constant_override("margin_top", 8)
+	pad.add_theme_constant_override("margin_bottom", 8)
+	card.add_child(pad)
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 6)
+	pad.add_child(body)
+
+	var portrait := TextureRect.new()
+	portrait.name = "Portrait"
+	portrait.custom_minimum_size = Vector2(96, 96)
+	portrait.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var tex_path := str(opt.get("portrait", ""))
+	if ResourceLoader.exists(tex_path):
+		portrait.texture = load(tex_path)
+	body.add_child(portrait)
+
+	var title := Label.new()
+	title.name = "Title"
+	title.text = Loc.t(str(opt.get("title", "")))
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 15)
+	title.add_theme_color_override("font_color", Color(0.93, 0.86, 0.68, 1))
+	body.add_child(title)
+
+	var desc := Label.new()
+	desc.name = "Desc"
+	desc.text = Loc.t(str(opt.get("desc", "")))
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	desc.add_theme_font_size_override("font_size", 12)
+	desc.add_theme_color_override("font_color", Color(0.72, 0.66, 0.55, 1))
+	body.add_child(desc)
+
+	var pick := Button.new()
+	pick.name = "Pick"
+	pick.text = Loc.t("menu.imprint_pick")
+	pick.custom_minimum_size = Vector2(0, 30)
+	pick.pressed.connect(_on_imprint_picked.bind(str(opt.get("id", ""))))
+	body.add_child(pick)
+	return card
+
+
+func _refresh_imprint_panel() -> void:
+	if _imprint_panel == null:
+		return
+	var grid: GridContainer = _imprint_panel.get_node_or_null("ImprintGrid")
+	if grid:
+		for card in grid.get_children():
+			var fam := str(card.name).trim_prefix("Card_")
+			var picked := fam == _selected_imprint
+			card.modulate = Color(1.12, 1.08, 0.92, 1.0) if picked else Color.WHITE
+	var element_wrap: VBoxContainer = _imprint_panel.get_node_or_null("ElementWrap")
+	if element_wrap:
+		element_wrap.visible = SkillCatalog.is_mage_imprint(_selected_imprint)
+	if _element_row:
+		for btn in _element_row.get_children():
+			if btn is Button:
+				btn.disabled = str(btn.name).trim_prefix("Element_") == _selected_element
+
+
+func _on_imprint_picked(family: String) -> void:
+	_selected_imprint = SkillCatalog.normalize_imprint(family)
+	if not SkillCatalog.is_mage_imprint(_selected_imprint):
+		_selected_element = "fire"
+	_refresh_imprint_panel()
+
+
+func _on_element_picked(element: String) -> void:
+	if element in SkillCatalog.MAGE_ELEMENTS:
+		_selected_element = element
+	_refresh_imprint_panel()
+
+
+func _confirm_imprint() -> void:
+	if _pending_slot < 1:
+		return
+	if not MetaProgress.new_game_with_imprint(_pending_slot, _selected_imprint, _selected_element):
 		return
 	get_tree().change_scene_to_file(HUB_SCENE)

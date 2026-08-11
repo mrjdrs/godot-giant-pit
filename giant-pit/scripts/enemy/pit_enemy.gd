@@ -159,6 +159,8 @@ func _physics_process(delta: float) -> void:
 			sprite.modulate = Color.WHITE
 
 	var st: Dictionary = statuses.tick(delta)
+	if flash_timer <= 0.0:
+		sprite.modulate = statuses.visual_tint()
 	if float(st.get("dot_damage", 0.0)) > 0.0:
 		hp = maxf(hp - float(st["dot_damage"]), 0.0)
 		_update_hp_label()

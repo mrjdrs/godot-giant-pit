@@ -154,3 +154,17 @@ func move_mult() -> float:
 	if _chill_t > 0.0:
 		return clampf(1.0 - _chill_slow, 0.15, 1.0)
 	return 1.0
+
+
+func visual_tint() -> Color:
+	if _freeze_t > 0.0:
+		return Color(0.65, 0.88, 1.0)
+	if _chill_t > 0.0:
+		return Color(0.78, 0.92, 1.0)
+	if _burn_t > 0.0:
+		return Color(1.0, 0.72, 0.55)
+	if _corrode_t > 0.0:
+		return Color(0.75, 1.0, 0.55)
+	if _weaken_t > 0.0:
+		return Color(0.72, 0.55, 0.95)
+	return Color.WHITE

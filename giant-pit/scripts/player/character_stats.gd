@@ -17,7 +17,9 @@ const BASE_LUK := 10.0
 const BASE_MAX_HP := 80.0
 const HP_PER_VIT := 4.0
 const PATK_PER_STR := 1.2
+const MATK_PER_INT := 1.4
 const BASE_PATK := 8.0
+const BASE_MATK := 6.0
 const BASE_PDEF := 2.0
 const BASE_CARRY := 20.0
 const CARRY_PER_VIT := 1.5
@@ -30,6 +32,7 @@ var spirit: float = BASE_SPI
 var luck: float = BASE_LUK
 var max_hp: float = BASE_MAX_HP
 var patk: float = BASE_PATK
+var matk: float = BASE_MATK
 var pdef: float = BASE_PDEF
 var crit: float = 0.0
 var critdmg: float = 0.5
@@ -98,6 +101,7 @@ func recompute() -> void:
 
 	max_hp = BASE_MAX_HP + vitality * HP_PER_VIT + bonus_hp + float(_equip.get("max_hp", 0.0))
 	patk = (BASE_PATK + strength * PATK_PER_STR + bonus_patk) * brand_dmg * (1.0 + float(_equip.get("damage", 0.0))) * (1.0 + stance_pct)
+	matk = (BASE_MATK + intellect * MATK_PER_INT) * brand_dmg * (1.0 + float(_equip.get("damage", 0.0)) * 0.5)
 	pdef = BASE_PDEF + float(_equip.get("defense", 0.0)) + vitality * 0.15
 	carry_cap = BASE_CARRY + vitality * CARRY_PER_VIT
 	changed.emit()
@@ -113,6 +117,7 @@ func snapshot() -> Dictionary:
 		"luck": luck,
 		"max_hp": max_hp,
 		"patk": patk,
+		"matk": matk,
 		"pdef": pdef,
 		"crit": crit,
 		"critdmg": critdmg,

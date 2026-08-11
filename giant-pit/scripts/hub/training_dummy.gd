@@ -188,6 +188,7 @@ func _ensure_imprint_switch(hud: Node) -> void:
 		[SkillCatalog.FAMILY_COLD, "training.imprint_cold"],
 		[SkillCatalog.FAMILY_HOT, "training.imprint_hot"],
 		[SkillCatalog.FAMILY_MAGE, "training.imprint_mage"],
+		[SkillCatalog.FAMILY_AFFINITY, "training.imprint_affinity"],
 	]
 	for opt in opts:
 		var fam: String = opt[0]
