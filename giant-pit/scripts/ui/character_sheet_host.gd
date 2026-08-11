@@ -99,11 +99,10 @@ func _player_is_settling() -> bool:
 
 
 func _refresh_all() -> void:
-	if stats_panel.visible:
+	if stats_panel:
 		stats_panel.refresh()
-	if bag_panel.visible:
+	if bag_panel and bag_panel.visible:
 		bag_panel.refresh()
-	if skills_panel.visible:
+	if skills_panel:
 		skills_panel.refresh()
-
 

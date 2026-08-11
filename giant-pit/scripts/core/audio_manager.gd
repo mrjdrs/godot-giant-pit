@@ -40,15 +40,15 @@ func stop_bgm() -> void:
 	_bgm.stop()
 
 
-func play_sfx(path: String) -> void:
+func play_sfx(path: String, volume_db: float = -4.0, pitch_scale: float = 1.0) -> void:
 	var stream: AudioStream = load(path)
 	if stream == null:
 		return
-	_play_stream_now(stream)
+	_play_stream_now(stream, volume_db, pitch_scale)
 
 
-func play_stream(stream: AudioStream) -> void:
-	_play_stream_now(stream)
+func play_stream(stream: AudioStream, volume_db: float = -4.0, pitch_scale: float = 1.0) -> void:
+	_play_stream_now(stream, volume_db, pitch_scale)
 
 
 func _ensure_sfx_pool() -> void:
@@ -62,7 +62,7 @@ func _ensure_sfx_pool() -> void:
 		_sfx_players.append(p)
 
 
-func _play_stream_now(stream: AudioStream) -> void:
+func _play_stream_now(stream: AudioStream, volume_db: float = -4.0, pitch_scale: float = 1.0) -> void:
 	if stream == null:
 		return
 	_ensure_sfx_pool()
@@ -71,6 +71,8 @@ func _play_stream_now(stream: AudioStream) -> void:
 	var p: AudioStreamPlayer = _sfx_players[_sfx_cursor]
 	_sfx_cursor = (_sfx_cursor + 1) % _sfx_players.size()
 	p.stream = stream
+	p.volume_db = volume_db
+	p.pitch_scale = pitch_scale
 	p.play()
 
 
@@ -85,6 +87,18 @@ func sfx_weapon_attack(weapon_family: String = "blade") -> void:
 				play_sfx("res://assets/audio/sfx_blade_chop.wav")
 			else:
 				play_stream(_get_chop_stream())
+		"gun", "hot_gun":
+			if ResourceLoader.exists("res://assets/audio/sfx_blade_chop.wav"):
+				play_sfx("res://assets/audio/sfx_blade_chop.wav", -4.0, 1.35)
+			elif ResourceLoader.exists("res://assets/audio/sfx_interact.wav"):
+				play_sfx("res://assets/audio/sfx_interact.wav", -2.0, 1.4)
+			else:
+				play_sfx("res://assets/audio/sfx_blade.wav")
+		"mage", "mage_flame":
+			if ResourceLoader.exists("res://assets/audio/sfx_pickup.wav"):
+				play_sfx("res://assets/audio/sfx_pickup.wav", -6.0, 0.85)
+			else:
+				play_sfx("res://assets/audio/sfx_blade.wav")
 		_:
 			play_sfx("res://assets/audio/sfx_blade.wav")
 

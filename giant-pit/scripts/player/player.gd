@@ -13,6 +13,14 @@ const ShockwaveFxScript = preload("res://scripts/combat/skill_fx/shockwave_fx.gd
 const WhirlRingFxScript = preload("res://scripts/combat/skill_fx/whirl_ring_fx.gd")
 const GroundCrackFxScript = preload("res://scripts/combat/skill_fx/ground_crack_fx.gd")
 const DrawSlashFxScript = preload("res://scripts/combat/skill_fx/draw_slash_fx.gd")
+const HitboxScript = preload("res://scripts/combat/hitbox.gd")
+const MuzzleFlashFxScript = preload("res://scripts/combat/skill_fx/muzzle_flash_fx.gd")
+const CastFlareFxScript = preload("res://scripts/combat/skill_fx/cast_flare_fx.gd")
+const FlameArcFxScript = preload("res://scripts/combat/skill_fx/flame_arc_fx.gd")
+const GunBlastFxScript = preload("res://scripts/combat/skill_fx/gun_blast_fx.gd")
+const FlameBurstFxScript = preload("res://scripts/combat/skill_fx/flame_burst_fx.gd")
+const RuneCastFxScript = preload("res://scripts/combat/skill_fx/rune_cast_fx.gd")
+const StatusEffects = preload("res://scripts/combat/status_effects.gd")
 
 signal hp_changed(current: float, maximum: float)
 signal died
@@ -101,6 +109,9 @@ var _swing_dur: float = 0.0
 var _swing_elapsed: float = 0.0
 var _swing_ease: int = EASE_SMOOTH
 var _blade_fx: Node2D = null
+var _alt_weapon: Polygon2D = null
+var _alt_weapon_glow: Polygon2D = null
+var _pose_recoil: float = 0.0
 var _ghost_cd: float = 0.0
 var _pending_skill: String = ""
 var _pending_skill_slot: String = ""
@@ -138,6 +149,7 @@ var _camera_origin: Vector2 = Vector2.ZERO
 var _locked_skill_slot: String = ""
 var _out_combat_t: float = 0.0
 var _mind_regen_acc: float = 0.0
+var statuses = StatusEffects.new()
 
 ## 俯视扩展（兼容旧场景赋值）
 var side_view: bool = false
@@ -165,6 +177,8 @@ func _ready() -> void:
 	_load_textures()
 	_apply_visual_scale()
 	_setup_blade_fx()
+	_sync_weapon_family()
+	_ensure_alt_weapon_visual()
 	_apply_blade_visual()
 	if has_node("Camera2D"):
 		_camera_origin = $Camera2D.offset
@@ -221,6 +235,7 @@ func _physics_process(delta: float) -> void:
 			combo_step = 0
 
 	_tick_skill_cds(delta)
+	_tick_player_statuses(delta)
 	_tick_attack(delta)
 	_tick_mind_regen(delta)
 	if _skill_invuln_t > 0.0:
@@ -258,6 +273,9 @@ func _tick_mind_regen(delta: float) -> void:
 	if MetaProgress.mind_value >= MetaProgress.mind_value_max():
 		return
 	var rate: float = MIND_REGEN_BASE + float(stats.spirit) * 0.15
+	var focus_r := MetaProgress.skill_rank("mgf_focus")
+	if focus_r > 0:
+		rate *= 1.0 + float(SkillCatalog.passive("mgf_focus").get("mind_regen", 0.15)) * float(focus_r)
 	_mind_regen_acc += rate * delta
 	var pts := int(_mind_regen_acc)
 	if pts <= 0:
@@ -341,8 +359,16 @@ func _process_attack_move(_delta: float) -> void:
 			lunge_spd = float(_skill_combat.get("lunge", 0.0)) * 0.22
 		elif _attack_phase == AttackPhase.SKILL_ACTIVE:
 			lunge_spd = float(_skill_combat.get("lunge", 18.0))
-	velocity = facing * lunge_spd + input_dir * _move_speed() * 0.18
+	velocity = facing * lunge_spd + input_dir * _move_speed() * 0.18 * _brace_move_factor()
 	facing = attack_locked_facing
+
+
+func _brace_move_factor() -> float:
+	var r := MetaProgress.skill_rank("hw_brace")
+	if r <= 0 or state != State.ATTACK_SKILL:
+		return 1.0
+	var cut := float(SkillCatalog.passive("hw_brace").get("move_cut", 0.35))
+	return maxf(1.0 - cut, 0.35)
 
 
 func _process_dash(delta: float) -> void:
@@ -354,7 +380,8 @@ func _process_dash(delta: float) -> void:
 			_dash_hit_active = false
 			if _blade_fx and _blade_fx.has_method("end_slash"):
 				_blade_fx.end_slash()
-		invincible = false
+		if _skill_invuln_t <= 0.0:
+			invincible = false
 		_skill_combat = {}
 		state = State.IDLE
 		velocity = Vector2.ZERO
@@ -368,19 +395,16 @@ func _move_speed() -> float:
 	return s
 
 
-func _damage_mult() -> float:
-	var m := 1.0
-	if awakening_branch == "whirl":
-		m *= 1.05
-	return m
-
-
 func _light_damage_mult() -> float:
 	var m := 1.0 * _damage_mult()
-	var chain_r := MetaProgress.skill_rank("sk_chain")
-	if chain_r > 0 or skills.has("rune_s_chain"):
-		var p: Dictionary = SkillCatalog.passive("sk_chain")
-		m += float(p.get("light_dmg", 0.06)) + float(p.get("light_dmg_per", 0.04)) * float(maxi(chain_r - 1, 0))
+	for pid in ["sk_chain", "hw_caliber", "mgf_ember", "mgi_frostmark", "mga_stain", "mgd_shadowbite", "mgl_grace"]:
+		var r := MetaProgress.skill_rank(pid)
+		if r <= 0:
+			continue
+		var p: Dictionary = SkillCatalog.passive(pid)
+		if p.has("light_dmg"):
+			m += float(p.get("light_dmg", 0.06)) + float(p.get("light_dmg_per", 0.04)) * float(maxi(r - 1, 0))
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_COLD or MetaProgress.imprint_family == "cold_blade":
 		if combo_step >= 2:
 			m += 0.05
 		if combo_step >= 3:
@@ -388,11 +412,260 @@ func _light_damage_mult() -> float:
 	return m
 
 
+func _is_mage_imprint() -> bool:
+	return SkillCatalog.is_mage_imprint(MetaProgress.imprint_family)
+
+
+func _mage_element() -> String:
+	if MetaProgress.mage_element in SkillCatalog.MAGE_ELEMENTS:
+		return MetaProgress.mage_element
+	return "fire"
+
+
+func _mage_innate_passive_id() -> String:
+	match _mage_element():
+		"ice":
+			return "mgi_frostmark"
+		"acid":
+			return "mga_stain"
+		"dark":
+			return "mgd_shadowbite"
+		"light":
+			return "mgl_grace"
+		_:
+			return "mgf_ember"
+
+
+func _mage_element_fx() -> Dictionary:
+	match _mage_element():
+		"ice":
+			return {
+				"trail": Color(0.55, 0.85, 1.0, 1.0),
+				"flash": Color(0.75, 0.95, 1.0, 0.75),
+				"spark": Color(0.7, 0.95, 1.0, 1.0),
+			}
+		"acid":
+			return {
+				"trail": Color(0.55, 0.92, 0.22, 1.0),
+				"flash": Color(0.7, 1.0, 0.3, 0.65),
+				"spark": Color(0.65, 1.0, 0.25, 1.0),
+			}
+		"dark":
+			return {
+				"trail": Color(0.45, 0.18, 0.72, 1.0),
+				"flash": Color(0.35, 0.12, 0.55, 0.7),
+				"spark": Color(0.5, 0.2, 0.85, 1.0),
+			}
+		"light":
+			return {
+				"trail": Color(1.0, 0.92, 0.55, 1.0),
+				"flash": Color(1.0, 0.96, 0.7, 0.65),
+				"spark": Color(1.0, 0.95, 0.65, 1.0),
+			}
+		_:
+			return {
+				"trail": Color(1.0, 0.42, 0.18, 1.0),
+				"flash": Color(0.75, 0.4, 1.0, 0.75),
+				"spark": Color(1.0, 0.45, 0.2, 1.0),
+			}
+
+
+func on_hit_apply_status(host, _hitbox) -> void:
+	if host == self:
+		return
+	var payload := _status_payload_from_combat(_skill_combat)
+	if payload.is_empty():
+		payload = _innate_status_payload()
+	if payload.is_empty():
+		return
+	if host.has_method("apply_status"):
+		host.apply_status(payload["kind"], payload.get("data", {}))
+
+
+func _innate_status_payload() -> Dictionary:
+	if not _is_mage_imprint():
+		return {}
+	var pid := _mage_innate_passive_id()
+	var r := MetaProgress.skill_rank(pid)
+	if r <= 0:
+		return {}
+	var p: Dictionary = SkillCatalog.passive(pid)
+	match _mage_element():
+		"ice":
+			return {
+				"kind": StatusEffects.KIND_CHILL,
+				"data": {
+					"slow": float(p.get("chill_slow", 0.22)) + float(p.get("chill_slow_per", 0.04)) * float(maxi(r - 1, 0)),
+					"duration": float(p.get("chill_time", 2.4)),
+					"stacks": 1,
+				},
+			}
+		"acid":
+			return {
+				"kind": StatusEffects.KIND_CORRODE,
+				"data": {
+					"amp": float(p.get("corrode_amp", 0.12)) + float(p.get("corrode_amp_per", 0.03)) * float(maxi(r - 1, 0)),
+					"duration": float(p.get("corrode_time", 3.5)),
+					"pdef_cut": float(p.get("pdef_cut", 2.0)) + float(p.get("pdef_cut_per", 0.8)) * float(maxi(r - 1, 0)),
+				},
+			}
+		"dark":
+			return {
+				"kind": StatusEffects.KIND_WEAKEN,
+				"data": {
+					"cut": float(p.get("weaken_cut", 0.12)) + float(p.get("weaken_cut_per", 0.03)) * float(maxi(r - 1, 0)),
+					"duration": float(p.get("weaken_time", 3.5)),
+				},
+			}
+		"light":
+			return {}
+		_:
+			return {
+				"kind": StatusEffects.KIND_BURN,
+				"data": {
+					"dps": float(p.get("burn_dps", 2.0)) + float(p.get("burn_dps_per", 1.0)) * float(maxi(r - 1, 0)),
+					"duration": float(p.get("burn_time", 2.2)),
+				},
+			}
+
+
+func _status_payload_from_combat(combat: Dictionary) -> Dictionary:
+	if combat.is_empty():
+		return {}
+	var status := str(combat.get("status", ""))
+	if status == "" and combat.has("burn_dps"):
+		status = "burn"
+	match status:
+		"burn":
+			return {
+				"kind": StatusEffects.KIND_BURN,
+				"data": {
+					"dps": float(combat.get("burn_dps", 4.0)),
+					"duration": float(combat.get("burn_time", 2.5)),
+				},
+			}
+		"chill":
+			return {
+				"kind": StatusEffects.KIND_CHILL,
+				"data": {
+					"slow": float(combat.get("chill_slow", 0.25)),
+					"duration": float(combat.get("chill_time", 2.5)),
+					"stacks": int(combat.get("chill_stacks", 1)),
+				},
+			}
+		"corrode":
+			return {
+				"kind": StatusEffects.KIND_CORRODE,
+				"data": {
+					"amp": float(combat.get("corrode_amp", 0.15)),
+					"duration": float(combat.get("corrode_time", 3.5)),
+					"pdef_cut": float(combat.get("pdef_cut", 0.0)),
+				},
+			}
+		"weaken":
+			return {
+				"kind": StatusEffects.KIND_WEAKEN,
+				"data": {
+					"cut": float(combat.get("weaken_cut", 0.15)),
+					"duration": float(combat.get("weaken_time", 3.5)),
+				},
+			}
+		"bless":
+			return {}
+		_:
+			return {}
+
+
+func _attach_status_meta(obj: Object, combat: Dictionary = {}) -> void:
+	var payload := _status_payload_from_combat(combat)
+	if payload.is_empty():
+		payload = _innate_status_payload()
+	if payload.is_empty():
+		return
+	obj.set_meta("status_kind", payload["kind"])
+	obj.set_meta("status_payload", payload.get("data", {}))
+
+
+func _apply_self_bless(combat: Dictionary) -> void:
+	if combat.is_empty():
+		return
+	var heal := float(combat.get("bless_heal", 0.0))
+	if heal > 0.0:
+		hp = minf(hp + heal, max_hp)
+		hp_changed.emit(hp, max_hp)
+	statuses.apply(StatusEffects.KIND_BLESS, {
+		"shield": float(combat.get("bless_shield", 0.0)),
+		"hps": float(combat.get("bless_hps", 0.0)),
+		"duration": float(combat.get("bless_time", 3.0)),
+	})
+
+
+func _tick_player_statuses(delta: float) -> void:
+	var st: Dictionary = statuses.tick(delta)
+	if float(st.get("heal", 0.0)) > 0.0:
+		hp = minf(hp + float(st["heal"]), max_hp)
+		hp_changed.emit(hp, max_hp)
+
+
 func _skill_atk_spd() -> float:
-	var r := MetaProgress.skill_rank("sk_stance")
+	var bonus := 0.0
+	var stance_r := MetaProgress.skill_rank("sk_stance")
+	if stance_r > 0:
+		bonus += float(SkillCatalog.passive("sk_stance").get("atk_spd", 0.03)) * float(stance_r)
+	var reload_r := MetaProgress.skill_rank("hw_reload")
+	if reload_r > 0:
+		bonus += float(SkillCatalog.passive("hw_reload").get("atk_spd", 0.03)) * float(reload_r)
+	return 1.0 + bonus
+
+
+func _skill_cd_factor() -> float:
+	var cut := 0.0
+	var reload_r := MetaProgress.skill_rank("hw_reload")
+	if reload_r > 0:
+		cut += float(SkillCatalog.passive("hw_reload").get("cd_cut", 0.02)) * float(reload_r)
+	return maxf(1.0 - cut, 0.7)
+
+
+func _passive_dr() -> float:
+	var dr := 0.0
+	for pid in ["sk_ironwall", "hw_brace", "mgf_ward"]:
+		var r := MetaProgress.skill_rank(pid)
+		if r > 0:
+			dr += float(SkillCatalog.passive(pid).get("dr", 0.04)) * float(r)
+	return clampf(dr, 0.0, 0.6)
+
+
+func _brace_skill_dmg() -> float:
+	var r := MetaProgress.skill_rank("hw_brace")
 	if r <= 0:
 		return 1.0
-	return 1.0 + float(SkillCatalog.passive("sk_stance").get("atk_spd", 0.03)) * float(r)
+	return 1.0 + float(SkillCatalog.passive("hw_brace").get("skill_dmg", 0.03)) * float(r)
+
+
+func has_burn() -> bool:
+	return _is_mage_imprint() and _mage_element() == "fire" and burn_dps() > 0.0
+
+
+func burn_dps() -> float:
+	var r := MetaProgress.skill_rank("mgf_ember")
+	if r <= 0:
+		return 0.0
+	var p: Dictionary = SkillCatalog.passive("mgf_ember")
+	return float(p.get("burn_dps", 2.0)) + float(p.get("burn_dps_per", 1.0)) * float(maxi(r - 1, 0))
+
+
+func burn_time() -> float:
+	var r := MetaProgress.skill_rank("mgf_ember")
+	if r <= 0:
+		return 0.0
+	return float(SkillCatalog.passive("mgf_ember").get("burn_time", 2.2))
+
+
+func _damage_mult() -> float:
+	var m := 1.0
+	if awakening_branch == "whirl":
+		m *= 1.05
+	return m
 
 
 func _brand_stats() -> Dictionary:
@@ -404,6 +677,8 @@ func apply_meta_brand(p_brand: String = "iron") -> void:
 	brand_quality = p_brand
 	equip_bonus = MetaProgress.total_equipment_bonuses()
 	awakening_branch = MetaProgress.awakening_branch
+	_sync_weapon_family()
+	_ensure_alt_weapon_visual()
 	_refresh_character_stats(false)
 	_refresh_metal_load()
 
@@ -475,6 +750,9 @@ func _update_visuals() -> void:
 			blade_swing_deg = 0.0
 		sprite.rotation = lerp_angle(sprite.rotation, 0.0, 0.28)
 		sprite.scale = sprite.scale.lerp(Vector2(VISUAL_SCALE, VISUAL_SCALE), 0.28)
+		sprite.position.x = lerpf(sprite.position.x, 0.0, 0.28)
+		sprite.position.y = lerpf(sprite.position.y, 0.0, 0.28)
+		_pose_recoil = maxf(_pose_recoil - 0.15, 0.0)
 		hitbox.rotation = 0.0
 	_apply_blade_visual()
 	_apply_pose_texture()
@@ -489,27 +767,89 @@ func _apply_pose_texture() -> void:
 
 
 func _apply_blade_visual() -> void:
-	blade_sprite.rotation_degrees = BLADE_ART_OFFSET_DEG + blade_swing_deg
-	var hide_now := state == State.DASH or (_skill_hide_blade and _attack_phase == AttackPhase.SKILL_WINDUP)
-	blade_sprite.visible = not hide_now
-	if state == State.ATTACK_LIGHT and _attack_phase == AttackPhase.LIGHT_ACTIVE:
-		var u := 1.0
-		if _swing_dur > 0.001:
-			u = clampf(_swing_elapsed / _swing_dur, 0.0, 1.0)
-		var glow := 1.0 + 0.48 * sin(u * PI)
-		blade_sprite.modulate = Color(glow, glow * 0.94, 0.72 + 0.28 * glow, 1.0)
-	elif state == State.ATTACK_SKILL and _attack_phase == AttackPhase.SKILL_ACTIVE:
-		blade_sprite.modulate = Color(1.28, 1.12, 0.82, 1.0)
+	var hide_now := state == State.DASH or (_is_blade_imprint() and _skill_hide_blade and _attack_phase == AttackPhase.SKILL_WINDUP)
+	if _is_blade_imprint():
+		blade_sprite.rotation_degrees = BLADE_ART_OFFSET_DEG + blade_swing_deg
+		blade_sprite.visible = not hide_now
+		if state == State.ATTACK_LIGHT and _attack_phase == AttackPhase.LIGHT_ACTIVE:
+			var u := 1.0
+			if _swing_dur > 0.001:
+				u = clampf(_swing_elapsed / _swing_dur, 0.0, 1.0)
+			var glow := 1.0 + 0.48 * sin(u * PI)
+			blade_sprite.modulate = Color(glow, glow * 0.94, 0.72 + 0.28 * glow, 1.0)
+		elif state == State.ATTACK_SKILL and _attack_phase == AttackPhase.SKILL_ACTIVE:
+			blade_sprite.modulate = Color(1.28, 1.12, 0.82, 1.0)
+		else:
+			blade_sprite.modulate = Color.WHITE
+		if _alt_weapon:
+			_alt_weapon.visible = false
+			_alt_weapon_glow.visible = false
 	else:
-		blade_sprite.modulate = Color.WHITE
+		blade_sprite.visible = false
+		if _alt_weapon:
+			_alt_weapon.visible = not hide_now
+			_alt_weapon_glow.visible = not hide_now
+			var kick := 0.0
+			if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+				kick = -blade_swing_deg * 0.45 - _pose_recoil * 14.0
+			else:
+				kick = blade_swing_deg * 0.35
+			_alt_weapon.rotation_degrees = kick
+			_alt_weapon_glow.rotation_degrees = kick
+			_alt_weapon.position = Vector2(8, 0)
+			_alt_weapon_glow.position = Vector2(8, 0)
+			if state == State.ATTACK_LIGHT or state == State.ATTACK_SKILL:
+				if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+					_alt_weapon.modulate = Color(1.15, 1.05, 0.85, 1.0)
+				else:
+					_alt_weapon.modulate = Color(1.2, 0.85, 0.55, 1.0)
+			else:
+				_alt_weapon.modulate = Color.WHITE
 	_apply_attack_pose()
 
 
 func _apply_attack_pose() -> void:
 	if state != State.ATTACK_LIGHT and state != State.ATTACK_SKILL:
+		_pose_recoil = maxf(_pose_recoil - 0.2, 0.0)
 		return
 	var squash := 0.0
 	var rot_k := 0.11
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		if _attack_phase == AttackPhase.LIGHT_WINDUP or _attack_phase == AttackPhase.SKILL_WINDUP:
+			squash = -0.04
+			rot_k = 0.02
+		elif _attack_phase == AttackPhase.LIGHT_ACTIVE or _attack_phase == AttackPhase.SKILL_ACTIVE:
+			squash = 0.08
+			rot_k = -0.08
+			_pose_recoil = 1.0
+		## 火铳后坐：身体略向后仰
+		sprite.rotation = lerp_angle(sprite.rotation, -attack_locked_facing.x * 0.12 * _pose_recoil, 0.35)
+		sprite.scale = sprite.scale.lerp(
+			Vector2(VISUAL_SCALE * (1.0 + squash), VISUAL_SCALE * (1.0 - squash * 0.4)),
+			0.4
+		)
+		sprite.position.x = lerpf(sprite.position.x, -attack_locked_facing.x * 3.0 * _pose_recoil, 0.35)
+		sprite.position.y = lerpf(sprite.position.y, 0.0, 0.4)
+		return
+	if _is_mage_imprint():
+		if _attack_phase == AttackPhase.LIGHT_WINDUP or _attack_phase == AttackPhase.SKILL_WINDUP:
+			squash = -0.06
+			rot_k = 0.04
+		elif _attack_phase == AttackPhase.LIGHT_ACTIVE or _attack_phase == AttackPhase.SKILL_ACTIVE:
+			squash = 0.06
+			rot_k = 0.1
+		sprite.rotation = lerp_angle(sprite.rotation, deg_to_rad(blade_swing_deg * rot_k) * 0.5, 0.4)
+		sprite.scale = sprite.scale.lerp(
+			Vector2(VISUAL_SCALE * (1.0 + squash * 0.6), VISUAL_SCALE * (1.0 + squash * 0.35)),
+			0.38
+		)
+		if _skill_jump > 0.0 and state == State.ATTACK_SKILL and _attack_phase == AttackPhase.SKILL_WINDUP and _skill_windup_dur > 0.001:
+			var u := 1.0 - clampf(_attack_timer / _skill_windup_dur, 0.0, 1.0)
+			sprite.position.y = -_skill_jump * sin(u * PI * 0.85)
+		else:
+			sprite.position.y = lerpf(sprite.position.y, -2.0 if _attack_phase == AttackPhase.SKILL_ACTIVE else 0.0, 0.35)
+		sprite.position.x = lerpf(sprite.position.x, 0.0, 0.3)
+		return
 	if _attack_phase == AttackPhase.LIGHT_WINDUP or _attack_phase == AttackPhase.SKILL_WINDUP:
 		squash = -0.07
 		rot_k = 0.07
@@ -527,14 +867,15 @@ func _apply_attack_pose() -> void:
 	)
 	if _skill_jump > 0.0 and state == State.ATTACK_SKILL:
 		if _attack_phase == AttackPhase.SKILL_WINDUP and _skill_windup_dur > 0.001:
-			var u := 1.0 - clampf(_attack_timer / _skill_windup_dur, 0.0, 1.0)
-			sprite.position.y = -_skill_jump * sin(u * PI * 0.85)
+			var u2 := 1.0 - clampf(_attack_timer / _skill_windup_dur, 0.0, 1.0)
+			sprite.position.y = -_skill_jump * sin(u2 * PI * 0.85)
 		elif _attack_phase == AttackPhase.SKILL_ACTIVE:
 			sprite.position.y = lerpf(sprite.position.y, 0.0, 0.55)
 		else:
 			sprite.position.y = lerpf(sprite.position.y, 0.0, 0.4)
 	elif absf(sprite.position.y) > 0.2:
 		sprite.position.y = lerpf(sprite.position.y, 0.0, 0.35)
+	sprite.position.x = lerpf(sprite.position.x, 0.0, 0.35)
 
 
 func _face_mouse() -> void:
@@ -547,6 +888,9 @@ func _face_mouse() -> void:
 func _start_light_attack(_lock_facing: Vector2 = Vector2.ZERO) -> void:
 	_face_mouse()
 	attack_locked_facing = facing
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT or _is_mage_imprint():
+		_start_ranged_light()
+		return
 	state = State.ATTACK_LIGHT
 	_light_buffered = false
 	if combo_window > 0.0 and combo_step > 0 and combo_step < LIGHT_COMBO_MAX:
@@ -569,6 +913,49 @@ func _start_light_attack(_lock_facing: Vector2 = Vector2.ZERO) -> void:
 	_attack_timer = windup
 
 
+func _start_ranged_light() -> void:
+	state = State.ATTACK_LIGHT
+	_light_buffered = false
+	combo_step = 1
+	combo_window = 0.0
+	_combo_def = {"windup": 0.08, "active": 0.06, "recovery": 0.18, "lunge": 0.0, "damage": 8.0, "knockback": 70.0, "poise": 6.0, "hit_size": Vector2(8, 8), "hit_offset": Vector2(0, 0), "swing_from": -6.0, "swing_to": 10.0}
+	_attack_spd = _skill_atk_spd()
+	_attack_phase = AttackPhase.LIGHT_WINDUP
+	_attack_timer = float(_combo_def["windup"]) / _attack_spd
+	if _is_mage_imprint():
+		var elem_fx := _mage_element_fx()
+		_skill_fx_def = {
+			"trail_color": elem_fx["trail"],
+			"flash_color": elem_fx["flash"],
+		}
+		_begin_blade_swing(blade_swing_deg, -18.0, _attack_timer, EASE_OUT)
+	else:
+		_skill_fx_def = {
+			"trail_color": Color(0.55, 0.9, 0.95, 1.0),
+			"flash_color": Color(1.0, 0.85, 0.4, 0.7),
+		}
+		_begin_blade_swing(blade_swing_deg, 8.0, _attack_timer, EASE_OUT)
+	hitbox.disable()
+	_apply_blade_visual()
+
+
+func _fire_ranged_light_shot() -> void:
+	var dir := attack_locked_facing
+	var patk_m: float = float(stats.patk) / CharacterStatsScript.BASE_PATK
+	var dmg := 8.0 * _light_damage_mult() * patk_m
+	var speed := 340.0
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		var cr := MetaProgress.skill_rank("hw_caliber")
+		if cr > 0:
+			speed *= 1.0 + float(SkillCatalog.passive("hw_caliber").get("proj_speed_pct", 0.04)) * float(cr)
+		_begin_blade_swing(blade_swing_deg, -12.0, 0.06, EASE_IN)
+	else:
+		_begin_blade_swing(blade_swing_deg, 16.0, 0.06, EASE_IN)
+	_spawn_bolt(dir, _roll_attack_damage(dmg), 1, speed, {})
+	_play_imprint_cast_fx("", dir)
+	AudioManager.sfx_weapon_attack(weapon_family)
+
+
 func _try_cast_slot(slot: String) -> void:
 	if is_skill_slot_locked(slot):
 		show_toast(Loc.t("skill.slot_locked"), 2)
@@ -588,6 +975,10 @@ func _try_cast_slot(slot: String) -> void:
 func _try_spend_cast_mind(core_id: String) -> bool:
 	var rank := MetaProgress.skill_rank(core_id)
 	var cost := SkillCatalog.cast_cost(core_id, rank) if SkillCatalog.has_id(core_id) else CrystalCatalog.cast_cost(core_id)
+	var focus_r := MetaProgress.skill_rank("mgf_focus")
+	if focus_r > 0 and cost > 0:
+		var cut := float(SkillCatalog.passive("mgf_focus").get("mind_cut", 0.04)) * float(focus_r)
+		cost = maxi(int(round(float(cost) * (1.0 - cut))), 1)
 	if cost <= 0:
 		return true
 	if not MetaProgress.can_afford_mind(cost):
@@ -609,14 +1000,27 @@ func _cast_skill(slot: String, core_id: String) -> void:
 	var rank := maxi(MetaProgress.skill_rank(core_id), 1)
 	_skill_combat = SkillCatalog.combat(core_id, rank) if SkillCatalog.has_id(core_id) else {}
 	_skill_fx_def = SkillCatalog.fx(core_id, rank) if SkillCatalog.has_id(core_id) else {}
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		_skill_fx_def["trail_color"] = Color(0.55, 0.9, 0.95, 1.0)
+		_skill_fx_def["flash_color"] = Color(1.0, 0.82, 0.4, 0.75)
+		_skill_fx_def["dust"] = false
+	elif _is_mage_imprint():
+		var elem_fx := _mage_element_fx()
+		if not _skill_fx_def.has("trail_color"):
+			_skill_fx_def["trail_color"] = elem_fx["trail"]
+		if not _skill_fx_def.has("flash_color"):
+			_skill_fx_def["flash_color"] = elem_fx["flash"]
+		_skill_fx_def["dust"] = false
 	_skill_ticks_total = int(_skill_combat.get("ticks", 1))
 	_skill_tick_index = 0
 	_skill_hide_blade = bool(_skill_combat.get("hide_blade", false))
 	_skill_jump = float(_skill_combat.get("jump", 0.0))
 	_attack_reach = float(_brand_stats().get("reach", 1.0))
-	if str(_skill_combat.get("style", "")) == "dash_slash" or core_id == "core_s_dash" or core_id == "sk_dash":
+	if str(_skill_combat.get("style", "")) in ["dash_slash", "dash_shot", "mage_blink"] \
+			or core_id in ["core_s_dash", "sk_dash", "hw_sidestep", "mgf_blink", "mgi_froststep", "mga_acidflash", "mgd_shadowstep", "mgl_lightstep"]:
 		_start_dash_slash()
-		_skill_cd[slot] = (SkillCatalog.cooldown(core_id, rank) if SkillCatalog.has_id(core_id) else CrystalCatalog.cooldown(core_id)) * skill_cd_mult
+		var cd := (SkillCatalog.cooldown(core_id, rank) if SkillCatalog.has_id(core_id) else CrystalCatalog.cooldown(core_id))
+		_skill_cd[slot] = cd * skill_cd_mult * _skill_cd_factor()
 		if SkillCatalog.has_id(core_id) and SkillCatalog.is_loud(core_id, rank):
 			loud_skill_used.emit(core_id)
 		return
@@ -624,6 +1028,14 @@ func _cast_skill(slot: String, core_id: String) -> void:
 	var windup := float(_skill_combat.get("windup", 0.18))
 	_skill_windup_dur = windup
 	var swing_from := float(_skill_combat.get("swing_from", -62.0))
+	if not _is_blade_imprint():
+		## 非刀系：压缩挥砍弧，改成后坐/举杖
+		if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+			swing_from = float(_skill_combat.get("swing_from", 10.0)) * 0.2
+			_skill_hide_blade = true
+		else:
+			swing_from = float(_skill_combat.get("swing_from", -28.0)) * 0.45
+			_skill_hide_blade = true
 	_begin_blade_swing(blade_swing_deg, swing_from, windup, EASE_OUT)
 	_attack_phase = AttackPhase.SKILL_WINDUP
 	_attack_timer = windup
@@ -649,19 +1061,50 @@ func _start_dash_slash() -> void:
 	_dash_timer = float(_skill_combat.get("dash_duration", DASH_DURATION))
 	_dash_speed = float(_skill_combat.get("dash_speed", DASH_SPEED))
 	state = State.DASH
-	_dash_hit_active = true
-	var hit_size: Vector2 = _skill_combat.get("hit_size", Vector2(42, 22)) * _attack_reach
-	var hit_off: Vector2 = _skill_combat.get("hit_offset", Vector2(18, 0)) * _attack_reach
-	_set_hitbox_size(hit_size, hit_off)
+	var style := str(_skill_combat.get("style", "dash_slash"))
 	var patk_m: float = float(stats.patk) / CharacterStatsScript.BASE_PATK
-	var dmg := float(_skill_combat.get("damage", 10.0)) * _damage_mult() * patk_m
-	hitbox.enable(
-		_roll_attack_damage(dmg),
-		float(_skill_combat.get("knockback", 110.0)),
-		self,
-		float(_skill_combat.get("poise", 8.0))
-	)
-	_start_skill_slash_fx()
+	var dmg := float(_skill_combat.get("damage", 10.0)) * _damage_mult() * _brace_skill_dmg() * patk_m
+	if style == "dash_shot":
+		_dash_hit_active = false
+		hitbox.disable()
+		invincible = true
+		_skill_invuln_t = maxf(_skill_invuln_t, float(_skill_combat.get("invuln", 0.12)))
+		_spawn_bolt(_dash_dir, _roll_attack_damage(dmg), int(_skill_combat.get("pierce", 1)), float(_skill_combat.get("proj_speed", 380.0)))
+		_play_imprint_cast_fx(style, _dash_dir)
+	elif style == "mage_blink":
+		_dash_hit_active = false
+		hitbox.disable()
+		invincible = true
+		var dist := float(_skill_combat.get("lunge", 88.0))
+		_play_imprint_cast_fx(style, _dash_dir)
+		global_position += _dash_dir * dist
+		_dash_timer = 0.08
+		_dash_speed = 0.0
+		var inv := float(_skill_combat.get("invuln", 0.12))
+		_skill_invuln_t = maxf(_skill_invuln_t, inv)
+		var rad := float(_skill_combat.get("wave_radius", 36.0))
+		if bool(_skill_combat.get("self_cast", false)):
+			_apply_self_bless(_skill_combat)
+		if _mage_element() == "fire":
+			_spawn_rune_cast(global_position, rad * 0.45)
+			_spawn_cast_flare(global_position, rad * 0.7)
+		else:
+			_spawn_cast_flare(global_position, rad * 0.75)
+		_spawn_family_blast(global_position, rad * 0.85)
+		_aoe_damage_at(global_position, rad, dmg, float(_skill_combat.get("knockback", 80.0)), float(_skill_combat.get("poise", 6.0)))
+	else:
+		_dash_hit_active = true
+		var hit_size: Vector2 = _skill_combat.get("hit_size", Vector2(42, 22)) * _attack_reach
+		var hit_off: Vector2 = _skill_combat.get("hit_offset", Vector2(18, 0)) * _attack_reach
+		_set_hitbox_size(hit_size, hit_off)
+		hitbox.enable(
+			_roll_attack_damage(dmg),
+			float(_skill_combat.get("knockback", 110.0)),
+			self,
+			float(_skill_combat.get("poise", 8.0))
+		)
+		_attach_status_meta(hitbox, _skill_combat)
+		_start_skill_slash_fx()
 	AudioManager.sfx_roll()
 	AudioManager.sfx_weapon_attack(weapon_family)
 	_camera_shake = maxf(_camera_shake, float(_skill_fx_def.get("camera_shake", 0.04)))
@@ -695,18 +1138,21 @@ func _update_blade_swing(delta: float) -> void:
 	blade_swing_deg = lerpf(_swing_from, _swing_to, t)
 	_apply_blade_visual()
 	if _attack_phase == AttackPhase.LIGHT_ACTIVE:
-		## 朝向对齐，覆盖刀芒扇面；不跟刀身自旋，避免画面砍到却判空。
 		hitbox.rotation = 0.0
-		_sample_blade_trail(delta)
+		if _is_blade_imprint():
+			_sample_blade_trail(delta)
 	elif _attack_phase == AttackPhase.SKILL_ACTIVE:
-		hitbox.rotation = deg_to_rad(blade_swing_deg)
-		_sample_blade_trail(delta)
+		if _is_blade_imprint():
+			hitbox.rotation = deg_to_rad(blade_swing_deg)
+			_sample_blade_trail(delta)
+		else:
+			hitbox.rotation = 0.0
 	else:
 		hitbox.rotation = lerpf(hitbox.rotation, 0.0, 0.35)
 
 
 func _sample_blade_trail(delta: float) -> void:
-	if _blade_fx == null:
+	if _blade_fx == null or not _is_blade_imprint():
 		return
 	var tip_g: Vector2 = blade_sprite.to_global(Vector2(0.0, -20.0))
 	if _blade_fx.has_method("push_tip_local"):
@@ -751,18 +1197,23 @@ func _tick_attack(delta: float) -> void:
 		return
 	match _attack_phase:
 		AttackPhase.LIGHT_WINDUP:
-			var dmg: float = float(_combo_def["damage"]) * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)
-			var kb: float = float(_combo_def["knockback"])
-			var poise: float = float(_combo_def.get("poise", kb * 0.08))
-			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
 			var active_dur: float = float(_combo_def["active"]) / _attack_spd
-			_begin_blade_swing(float(_combo_def["swing_from"]), float(_combo_def["swing_to"]), active_dur, EASE_IN)
-			_start_light_slash_fx()
-			_attack_phase = AttackPhase.LIGHT_ACTIVE
-			_attack_timer = active_dur
-			AudioManager.sfx_weapon_attack(weapon_family)
-			if bool(_combo_def.get("impact", false)):
-				_camera_shake = maxf(_camera_shake, 0.10)
+			if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT or _is_mage_imprint():
+				_fire_ranged_light_shot()
+				_attack_phase = AttackPhase.LIGHT_ACTIVE
+				_attack_timer = active_dur
+			else:
+				var dmg: float = float(_combo_def["damage"]) * _light_damage_mult() * (stats.patk / CharacterStatsScript.BASE_PATK)
+				var kb: float = float(_combo_def["knockback"])
+				var poise: float = float(_combo_def.get("poise", kb * 0.08))
+				hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
+				_begin_blade_swing(float(_combo_def["swing_from"]), float(_combo_def["swing_to"]), active_dur, EASE_IN)
+				_start_light_slash_fx()
+				_attack_phase = AttackPhase.LIGHT_ACTIVE
+				_attack_timer = active_dur
+				AudioManager.sfx_weapon_attack(weapon_family)
+				if bool(_combo_def.get("impact", false)):
+					_camera_shake = maxf(_camera_shake, 0.10)
 		AttackPhase.LIGHT_ACTIVE:
 			hitbox.disable()
 			hitbox.rotation = 0.0
@@ -824,8 +1275,22 @@ func _tick_swing_pair() -> Vector2:
 	var swings = _skill_combat.get("swings", [])
 	if typeof(swings) == TYPE_ARRAY and _skill_tick_index < swings.size():
 		var s: Dictionary = swings[_skill_tick_index]
-		return Vector2(float(s.get("from", -70.0)), float(s.get("to", 70.0)))
-	return Vector2(float(_skill_combat.get("swing_from", -62.0)), float(_skill_combat.get("swing_to", 70.0)))
+		var pair := Vector2(float(s.get("from", -70.0)), float(s.get("to", 70.0)))
+		return _family_swing_scale(pair)
+	return _family_swing_scale(Vector2(
+		float(_skill_combat.get("swing_from", -62.0)),
+		float(_skill_combat.get("swing_to", 70.0))
+	))
+
+
+func _family_swing_scale(pair: Vector2) -> Vector2:
+	if _is_blade_imprint():
+		return pair
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		## 后坐小幅抖动，不做大挥砍
+		return Vector2(clampf(pair.x * 0.15, -14.0, 14.0), clampf(pair.y * 0.12, -18.0, 18.0))
+	## 焰咒：举杖/扫杖中幅
+	return Vector2(pair.x * 0.4, pair.y * 0.4)
 
 
 func _fire_pending_skill() -> void:
@@ -845,24 +1310,81 @@ func _fire_skill_tick() -> void:
 	attack_locked_facing = facing
 	var patk_m: float = float(stats.patk) / CharacterStatsScript.BASE_PATK
 	var style := str(_skill_combat.get("style", ""))
-	var dmg := float(_skill_combat.get("damage", 16.0)) * _damage_mult() * patk_m
-	if awakening_branch == "whirl" and style in ["smash_wave", "whirl", "ground_slam", "draw_slash"]:
+	var dmg := float(_skill_combat.get("damage", 16.0)) * _damage_mult() * _brace_skill_dmg() * patk_m
+	if awakening_branch == "whirl" and style in ["smash_wave", "whirl", "ground_slam", "draw_slash", "gun_artillery", "mage_meteor", "mage_cataclysm", "gun_overclock"]:
 		dmg *= 1.1
 	var kb := float(_skill_combat.get("knockback", 160.0))
 	var poise := float(_skill_combat.get("poise", 12.0))
 	match style:
-		"bolt":
+		"bolt", "gun_pierce", "mage_bolt":
 			_spawn_bolt(dir, dmg, int(_skill_combat.get("pierce", 1)), float(_skill_combat.get("proj_speed", 320.0)))
-		"ground_slam":
+		"gun_burst":
+			_spawn_bolt(dir, dmg, int(_skill_combat.get("pierce", 1)), float(_skill_combat.get("proj_speed", 400.0)))
+		"gun_overclock":
+			var fan := deg_to_rad(float(_skill_combat.get("fan_deg", 48.0)))
+			var n := maxi(_skill_ticks_total, 3)
+			var t := 0.0 if n <= 1 else float(_skill_tick_index) / float(n - 1)
+			var ang := -fan * 0.5 + fan * t
+			_spawn_bolt(dir.rotated(ang), dmg, 1, float(_skill_combat.get("proj_speed", 360.0)))
+		"gun_grenade", "gun_artillery", "mage_meteor":
 			var reach := float(_skill_combat.get("range", 140.0))
 			var target := global_position + dir * minf(global_position.distance_to(mouse), reach)
+			if style == "gun_grenade" or style == "mage_meteor" or style == "gun_artillery":
+				_schedule_aoe(target, float(_skill_combat.get("wave_radius", 60.0)), dmg, kb, poise, float(_skill_combat.get("fuse", 0.25)), style == "gun_artillery" or style == "mage_meteor")
+				if style == "mage_meteor":
+					_spawn_cast_flare(target, 20.0)
+				elif style == "gun_grenade":
+					_spawn_muzzle_flash(dir)
+		"gun_mine":
+			_schedule_aoe(global_position, float(_skill_combat.get("wave_radius", 60.0)), dmg, kb, poise, float(_skill_combat.get("fuse", 0.85)), true)
+		"mage_nova":
+			_set_hitbox_size(Vector2(float(_skill_combat.get("wave_radius", 56.0)) * 2.0, float(_skill_combat.get("wave_radius", 56.0)) * 2.0), Vector2.ZERO)
+			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
+			_spawn_shockwave(global_position, float(_skill_combat.get("wave_radius", 56.0)))
+			_spawn_cast_flare(global_position, float(_skill_combat.get("wave_radius", 56.0)) * 0.45)
+		"mage_ring", "mage_cataclysm":
 			_set_hitbox_size(
-				_skill_combat.get("hit_size", Vector2(64, 64)),
-				blade_pivot.to_local(target)
+				_skill_combat.get("hit_size", Vector2(74, 74)),
+				_skill_combat.get("hit_offset", Vector2.ZERO)
 			)
 			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
-			_spawn_ground_crack(target, float(_skill_combat.get("wave_radius", 70.0)))
-			_spawn_shockwave(target, float(_skill_combat.get("wave_radius", 70.0)))
+			if _skill_tick_index == 0:
+				_spawn_whirl_ring(float(_skill_combat.get("range", 60.0)))
+				_spawn_cast_flare(global_position, 24.0)
+		"mage_lash", "mage_cascade":
+			_set_hitbox_size(
+				_skill_combat.get("hit_size", Vector2(86, 36)) * _attack_reach,
+				_skill_combat.get("hit_offset", Vector2(40, 0)) * _attack_reach
+			)
+			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
+			_attach_status_meta(hitbox, _skill_combat)
+			_spawn_flame_arc(dir)
+		"mage_ward":
+			if bool(_skill_combat.get("self_cast", false)):
+				_apply_self_bless(_skill_combat)
+				_spawn_cast_flare(global_position, float(_skill_combat.get("wave_radius", 48.0)))
+			else:
+				_set_hitbox_size(
+					_skill_combat.get("hit_size", Vector2(48, 48)),
+					_skill_combat.get("hit_offset", Vector2.ZERO)
+				)
+				hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
+				_attach_status_meta(hitbox, _skill_combat)
+		"gun_rail":
+			var slash_len := float(_skill_combat.get("slash_len", 200.0))
+			_set_hitbox_size(Vector2(slash_len, 18.0), Vector2(slash_len * 0.5, 0.0))
+			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
+			_spawn_gun_beam(dir, slash_len)
+		"ground_slam":
+			var reach2 := float(_skill_combat.get("range", 140.0))
+			var target2 := global_position + dir * minf(global_position.distance_to(mouse), reach2)
+			_set_hitbox_size(
+				_skill_combat.get("hit_size", Vector2(64, 64)),
+				blade_pivot.to_local(target2)
+			)
+			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
+			_spawn_ground_crack(target2, float(_skill_combat.get("wave_radius", 70.0)))
+			_spawn_shockwave(target2, float(_skill_combat.get("wave_radius", 70.0)))
 		"smash_wave":
 			_set_hitbox_size(
 				_skill_combat.get("hit_size", Vector2(52, 36)) * _attack_reach,
@@ -879,26 +1401,96 @@ func _fire_skill_tick() -> void:
 			if _skill_tick_index == 0:
 				_spawn_whirl_ring(float(_skill_combat.get("range", 56.0)))
 		"draw_slash":
-			var slash_len := float(_skill_combat.get("slash_len", 150.0))
-			_set_hitbox_size(Vector2(slash_len, 28.0), Vector2(slash_len * 0.5, 0.0))
+			var slash_len2 := float(_skill_combat.get("slash_len", 150.0))
+			_set_hitbox_size(Vector2(slash_len2, 28.0), Vector2(slash_len2 * 0.5, 0.0))
 			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
-			_spawn_draw_slash(dir, slash_len)
+			_spawn_draw_slash(dir, slash_len2)
 		_:
 			_set_hitbox_size(
 				_skill_combat.get("hit_size", Vector2(48, 28)) * _attack_reach,
 				_skill_combat.get("hit_offset", Vector2(22, 0)) * _attack_reach
 			)
 			hitbox.enable(_roll_attack_damage(dmg), kb, self, poise)
-	_start_skill_slash_fx()
+	if _style_uses_blade_slash(style):
+		_start_skill_slash_fx()
+	else:
+		_play_imprint_cast_fx(style, dir)
 	_apply_blade_visual()
 	AudioManager.sfx_weapon_attack(weapon_family)
 	_camera_shake = maxf(_camera_shake, float(_skill_fx_def.get("camera_shake", 0.08)))
-	if style == "myriad":
+	if style == "myriad" or style == "mage_cascade":
 		HitstopUtil.freeze(get_tree(), float(_skill_fx_def.get("hitstop", 0.08)))
 	if slot != "" and _skill_tick_index == 0:
 		var rank := maxi(MetaProgress.skill_rank(core_id), 1)
 		var cd := SkillCatalog.cooldown(core_id, rank) if SkillCatalog.has_id(core_id) else CrystalCatalog.cooldown(core_id)
-		_skill_cd[slot] = cd * skill_cd_mult
+		_skill_cd[slot] = cd * skill_cd_mult * _skill_cd_factor()
+
+
+func _schedule_aoe(pos: Vector2, radius: float, dmg: float, knock: float, poise: float, fuse: float, crack: bool) -> void:
+	var tree := get_tree()
+	if tree == null:
+		_aoe_damage_at(pos, radius, dmg, knock, poise)
+		_spawn_family_blast(pos, radius)
+		return
+	## 落地预警：枪=灰烟小圈，咒=符文点
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		_spawn_muzzle_flash((pos - global_position).normalized() if pos.distance_squared_to(global_position) > 4.0 else facing)
+	elif _is_mage_imprint():
+		if _mage_element() == "fire":
+			_spawn_rune_cast(pos, 12.0)
+		else:
+			_spawn_cast_flare(pos, radius * 0.35)
+	tree.create_timer(maxf(fuse, 0.01)).timeout.connect(func():
+		if not is_instance_valid(self):
+			return
+		_aoe_damage_at(pos, radius, dmg, knock, poise)
+		_spawn_family_blast(pos, radius)
+		if crack:
+			_spawn_ground_crack(pos, radius)
+	)
+
+
+func _spawn_family_blast(pos: Vector2, radius: float) -> void:
+	var col: Color = _skill_fx_def.get("flash_color", Color(1.0, 0.55, 0.25, 0.8))
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		var fx := _spawn_world_fx(GunBlastFxScript)
+		if fx.has_method("setup"):
+			fx.setup(pos, radius, col, 0.4)
+	elif _is_mage_imprint():
+		var fx2 := _spawn_world_fx(FlameBurstFxScript)
+		if fx2.has_method("setup"):
+			fx2.setup(pos, radius, col, 0.4)
+	else:
+		_spawn_shockwave(pos, radius)
+
+
+func _aoe_damage_at(pos: Vector2, radius: float, dmg: float, knock: float, poise: float) -> void:
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return
+	var q := PhysicsShapeQueryParameters2D.new()
+	var circle := CircleShape2D.new()
+	circle.radius = radius
+	q.shape = circle
+	q.transform = Transform2D(0.0, pos)
+	q.collision_mask = 16 ## hurtboxes
+	q.collide_with_areas = true
+	q.collide_with_bodies = false
+	var hits := space.intersect_shape(q, 32)
+	var rolled := _roll_attack_damage(dmg)
+	for h in hits:
+		var area = h.get("collider")
+		if area == null or not area.has_method("take_hit"):
+			continue
+		var fake := Area2D.new()
+		fake.set_script(HitboxScript)
+		fake.damage = rolled
+		fake.knockback_force = knock
+		fake.poise_damage = poise
+		fake.source = self
+		_attach_status_meta(fake, _skill_combat)
+		area.take_hit(fake)
+		fake.free()
 
 
 func _start_skill_slash_fx() -> void:
@@ -913,7 +1505,7 @@ func _start_skill_slash_fx() -> void:
 	_ghost_cd = 0.0
 
 
-func _spawn_bolt(dir: Vector2, dmg: float, pierce: int = 1, speed: float = 320.0) -> void:
+func _spawn_bolt(dir: Vector2, dmg: float, pierce: int = 1, speed: float = 320.0, combat = null) -> void:
 	var bolt := Area2D.new()
 	bolt.set_script(ProjectileSceneScript)
 	var parent_n := get_parent()
@@ -922,8 +1514,70 @@ func _spawn_bolt(dir: Vector2, dmg: float, pierce: int = 1, speed: float = 320.0
 	parent_n.add_child(bolt)
 	bolt.global_position = global_position + dir * 18.0
 	var col: Color = _skill_fx_def.get("trail_color", Color(1.0, 0.92, 0.62, 1.0))
+	var shape := _proj_shape_for_imprint()
 	if bolt.has_method("setup"):
-		bolt.setup(dir * speed, dmg, self, 90.0, pierce, col)
+		bolt.setup(dir * speed, dmg, self, 90.0, pierce, col, shape)
+	var payload_combat: Dictionary = _skill_combat if combat == null else combat
+	_attach_status_meta(bolt, payload_combat)
+
+
+func _play_imprint_cast_fx(style: String, dir: Vector2) -> void:
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		if style in ["mage_lash", "mage_cascade", "mage_nova", "mage_ring", "mage_cataclysm", "mage_meteor", "mage_blink", "gun_rail"]:
+			return
+		_spawn_muzzle_flash(dir)
+		if style in ["", "gun_burst", "gun_pierce", "gun_overclock", "dash_shot"]:
+			var side := Vector2(-dir.y, dir.x) * 8.0
+			var puff := _spawn_world_fx(GunBlastFxScript)
+			if puff.has_method("setup"):
+				puff.setup(global_position + side - dir * 4.0, 14.0, Color(0.75, 0.65, 0.45, 0.55), 0.18)
+	elif _is_mage_imprint():
+		if style in ["gun_pierce", "gun_burst", "gun_overclock", "gun_rail", "gun_grenade", "gun_mine", "gun_artillery", "dash_shot", "mage_lash", "mage_cascade"]:
+			return
+		if _mage_element() == "fire":
+			_spawn_rune_cast(global_position + dir * 12.0, 18.0 if style != "mage_nova" else 30.0)
+		if style in ["mage_nova", "mage_blink", ""]:
+			_spawn_cast_flare(global_position + dir * 10.0, 14.0)
+
+
+func _spawn_muzzle_flash(dir: Vector2) -> void:
+	var fx := _spawn_world_fx(MuzzleFlashFxScript)
+	var col: Color = _skill_fx_def.get("flash_color", Color(1.0, 0.82, 0.35, 0.95))
+	if fx.has_method("setup"):
+		fx.setup(global_position + dir * 16.0, dir, col, 22.0, 0.11)
+
+
+func _spawn_cast_flare(pos: Vector2, radius: float = 18.0) -> void:
+	var fx := _spawn_world_fx(CastFlareFxScript)
+	var col: Color = _skill_fx_def.get("flash_color", Color(1.0, 0.45, 0.18, 0.9))
+	if fx.has_method("setup"):
+		fx.setup(pos, col, radius, 0.2)
+
+
+func _spawn_rune_cast(pos: Vector2, radius: float = 20.0) -> void:
+	var fx := _spawn_world_fx(RuneCastFxScript)
+	var col: Color = _skill_fx_def.get("trail_color", Color(1.0, 0.45, 0.18, 0.9))
+	if fx.has_method("setup"):
+		fx.setup(pos, col, radius, 0.26)
+
+
+func _spawn_flame_arc(dir: Vector2) -> void:
+	var fx := _spawn_world_fx(FlameArcFxScript)
+	var pair := _tick_swing_pair()
+	var col: Color = _skill_fx_def.get("trail_color", Color(1.0, 0.42, 0.16, 0.85))
+	var radius := float(_skill_fx_def.get("flash_radius", 56.0)) * _attack_reach
+	if fx.has_method("setup"):
+		fx.setup(global_position, dir.angle(), pair.x, pair.y, radius, col, 0.2)
+
+
+func _spawn_gun_beam(dir: Vector2, length: float) -> void:
+	var fx := _spawn_world_fx(DrawSlashFxScript)
+	## 贯膛：青白激光而非刀芒金黄
+	var col := Color(0.65, 0.95, 1.0, 0.95)
+	var width := float(_skill_fx_def.get("trail_width", 8.0)) * 0.45
+	if fx.has_method("setup"):
+		fx.setup(global_position + dir * 8.0, dir, length, col, width, 0.14)
+	_spawn_muzzle_flash(dir)
 
 
 func _spawn_world_fx(script: Script) -> Node2D:
@@ -937,6 +1591,10 @@ func _spawn_world_fx(script: Script) -> Node2D:
 
 
 func _spawn_shockwave(pos: Vector2, radius: float) -> void:
+	## 刀系冲击环；枪/咒走专属爆炸，避免三系同款圆环
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT or _is_mage_imprint():
+		_spawn_family_blast(pos, radius)
+		return
 	var fx := _spawn_world_fx(ShockwaveFxScript)
 	var col: Color = _skill_fx_def.get("flash_color", Color(1.0, 0.62, 0.28, 0.7))
 	if fx.has_method("setup"):
@@ -981,6 +1639,8 @@ func _finish_attack_to_idle() -> void:
 	_swing_dur = 0.0
 	hitbox.rotation = 0.0
 	sprite.position.y = 0.0
+	sprite.position.x = 0.0
+	_pose_recoil = 0.0
 	if _blade_fx and _blade_fx.has_method("end_slash"):
 		_blade_fx.end_slash()
 	if state == State.ATTACK_LIGHT or state == State.ATTACK_SKILL:
@@ -1034,8 +1694,16 @@ func _spawn_hit_spark(pos: Vector2) -> void:
 	if parent_n == null:
 		parent_n = self
 	parent_n.add_child(spark)
+	var style := "blade"
+	var col := Color(1.0, 0.85, 0.35, 1.0)
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		style = "gun"
+		col = Color(0.7, 0.95, 1.0, 1.0)
+	elif _is_mage_imprint():
+		style = "mage"
+		col = _mage_element_fx()["spark"]
 	if spark.has_method("setup"):
-		spark.setup(pos, facing.x)
+		spark.setup(pos, facing.x, style, col)
 
 
 func _apply_pending_lifesteal() -> void:
@@ -1047,21 +1715,50 @@ func _apply_pending_lifesteal() -> void:
 	hp_changed.emit(hp, max_hp)
 
 
+func _reflect_ward_burn(from_pos: Vector2, ward_r: int) -> void:
+	var p: Dictionary = SkillCatalog.passive("mgf_ward")
+	var dps := float(p.get("reflect_burn", 1.5)) * float(ward_r)
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return
+	var q := PhysicsShapeQueryParameters2D.new()
+	var circle := CircleShape2D.new()
+	circle.radius = 48.0
+	q.shape = circle
+	q.transform = Transform2D(0.0, from_pos)
+	q.collision_mask = 16
+	q.collide_with_areas = true
+	q.collide_with_bodies = false
+	for h in space.intersect_shape(q, 16):
+		var area = h.get("collider")
+		if area == null:
+			continue
+		var host = area.get_parent()
+		if host != null and host.has_method("apply_status"):
+			host.apply_status(StatusEffects.KIND_BURN, {"dps": dps, "duration": 1.6})
+		elif host != null and host.has_method("apply_burn"):
+			host.apply_burn(dps, 1.6)
+
+
 func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	if invincible or input_locked:
 		return
 	var incoming := amount
-	var iron_r := MetaProgress.skill_rank("sk_ironwall")
-	if iron_r > 0:
-		incoming *= 1.0 - float(SkillCatalog.passive("sk_ironwall").get("dr", 0.04)) * float(iron_r)
+	incoming *= 1.0 - _passive_dr()
 	if awakening_branch == "ironwall":
 		incoming *= 0.85
-	var mitigated: float = maxf(incoming - stats.pdef, 1.0)
+	incoming = statuses.absorb_damage(incoming)
+	var mitigated: float = maxf(incoming - stats.pdef, 1.0) if incoming > 0.0 else 0.0
+	if mitigated <= 0.0:
+		return
 	hp = maxf(hp - mitigated, 0.0)
 	_hurt_flash = 0.2
 	_out_combat_t = 0.0
 	hp_changed.emit(hp, max_hp)
 	AudioManager.sfx_hurt_player()
+	var ward_r := MetaProgress.skill_rank("mgf_ward")
+	if ward_r > 0 and from_pos != Vector2.ZERO:
+		_reflect_ward_burn(from_pos, ward_r)
 	if from_pos != Vector2.ZERO:
 		var push := (global_position - from_pos).normalized() * 140.0
 		velocity += push
@@ -1133,8 +1830,75 @@ func _on_skills_changed() -> void:
 func _on_meta_changed() -> void:
 	equip_bonus = MetaProgress.total_equipment_bonuses()
 	awakening_branch = MetaProgress.awakening_branch
+	_sync_weapon_family()
+	_ensure_alt_weapon_visual()
 	_refresh_character_stats(true)
 	_refresh_metal_load()
+
+
+func _sync_weapon_family() -> void:
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		weapon_family = "gun"
+	elif _is_mage_imprint():
+		weapon_family = "mage"
+	else:
+		weapon_family = "blade"
+
+
+func _is_blade_imprint() -> bool:
+	return MetaProgress.imprint_family == SkillCatalog.FAMILY_COLD or MetaProgress.imprint_family == "cold_blade"
+
+
+func _proj_shape_for_imprint() -> String:
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		return "tracer"
+	if _is_mage_imprint():
+		return "flame" if _mage_element() == "fire" else "orb"
+	return "crescent"
+
+
+func _style_uses_blade_slash(style: String) -> bool:
+	if not _is_blade_imprint():
+		return false
+	return style in ["", "dash_slash", "smash_wave", "whirl", "riposte", "myriad", "draw_slash", "ground_slam", "bolt"]
+
+
+func _ensure_alt_weapon_visual() -> void:
+	if blade_pivot == null:
+		return
+	if _alt_weapon == null:
+		_alt_weapon_glow = Polygon2D.new()
+		_alt_weapon_glow.name = "AltWeaponGlow"
+		_alt_weapon_glow.z_index = 9
+		blade_pivot.add_child(_alt_weapon_glow)
+		_alt_weapon = Polygon2D.new()
+		_alt_weapon.name = "AltWeapon"
+		_alt_weapon.z_index = 10
+		blade_pivot.add_child(_alt_weapon)
+	if _is_blade_imprint():
+		_alt_weapon.visible = false
+		_alt_weapon_glow.visible = false
+		return
+	_alt_weapon.visible = true
+	_alt_weapon_glow.visible = true
+	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
+		_alt_weapon.color = Color(0.55, 0.78, 0.82, 1.0)
+		_alt_weapon.polygon = PackedVector2Array([
+			Vector2(-4, -3), Vector2(22, -2), Vector2(26, 0), Vector2(22, 2), Vector2(-4, 3), Vector2(-6, 0),
+		])
+		_alt_weapon_glow.color = Color(1.0, 0.72, 0.35, 0.4)
+		_alt_weapon_glow.polygon = PackedVector2Array([
+			Vector2(-2, -5), Vector2(24, -4), Vector2(28, 0), Vector2(24, 4), Vector2(-2, 5),
+		])
+	else:
+		_alt_weapon.color = Color(0.55, 0.32, 0.75, 1.0)
+		_alt_weapon.polygon = PackedVector2Array([
+			Vector2(-2, -2), Vector2(18, -1.5), Vector2(20, 0), Vector2(18, 1.5), Vector2(-2, 2),
+		])
+		_alt_weapon_glow.color = Color(1.0, 0.45, 0.2, 0.55)
+		_alt_weapon_glow.polygon = PackedVector2Array([
+			Vector2(16, -6), Vector2(24, -4), Vector2(26, 0), Vector2(24, 4), Vector2(16, 6), Vector2(14, 0),
+		])
 
 
 func _refresh_character_stats(keep_ratio: bool) -> void:

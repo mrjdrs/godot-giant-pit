@@ -22,6 +22,7 @@ var mind_shards_banked: int = 0 ## 静室待吸收也可直接扣 stash
 var mind_value: int = 0 ## 放技能 / 传送消耗
 var gold: int = 0
 var imprint_family: String = "cold_blade"
+var mage_element: String = "fire" ## fire|ice|acid|dark|light；仅烙印为 mage 时生效
 var attr_allocated: Dictionary = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
 var unspent_points: int = 0
 var quest_kill_progress: int = 0
@@ -207,6 +208,8 @@ func snapshot_skill_state() -> Dictionary:
 		"learned_skills": learned_skills.duplicate(true),
 		"skill_loadout": skill_loadout.duplicate(true),
 		"mind_value": mind_value,
+		"imprint_family": imprint_family,
+		"mage_element": mage_element,
 	}
 
 
@@ -215,6 +218,14 @@ func _apply_skill_state(snap: Dictionary) -> void:
 	skill_loadout = snap.get("skill_loadout", {}).duplicate(true)
 	if snap.has("mind_value"):
 		mind_value = int(snap["mind_value"])
+	if snap.has("imprint_family"):
+		imprint_family = str(snap["imprint_family"])
+		if imprint_family == "":
+			imprint_family = "cold_blade"
+	if snap.has("mage_element"):
+		mage_element = str(snap["mage_element"])
+		if mage_element == "":
+			mage_element = "fire"
 
 
 func begin_skill_sandbox() -> void:
@@ -270,18 +281,26 @@ func set_skill_rank_sandbox(skill_id: String, rank: int) -> String:
 	return "ok"
 
 
+func tree_family() -> String:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	return SkillCatalog.active_tree_family(imprint_family, mage_element)
+
+
 func fill_all_skills_sandbox() -> void:
 	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	if not _skill_sandbox_active:
 		return
-	for sid in SkillCatalog.all_ids():
+	var fam := tree_family()
+	for sid in SkillCatalog.tree_ids(fam):
 		learned_skills[str(sid)] = SkillCatalog.max_rank(str(sid))
 	var used: Dictionary = {}
 	for slot in SkillCatalog.HOTKEY_SLOTS:
 		var cur := str(skill_loadout.get(slot, ""))
-		if cur != "":
+		if cur != "" and SkillCatalog.family_of(cur) == fam:
 			used[cur] = true
-	for sid in SkillCatalog.all_ids():
+		elif cur != "":
+			skill_loadout[slot] = ""
+	for sid in SkillCatalog.tree_ids(fam):
 		var id_str := str(sid)
 		if not SkillCatalog.is_active(id_str) or used.has(id_str):
 			continue
@@ -290,6 +309,45 @@ func fill_all_skills_sandbox() -> void:
 				skill_loadout[slot] = id_str
 				used[id_str] = true
 				break
+	changed.emit()
+
+
+func set_imprint_family_sandbox(family: String) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not _skill_sandbox_active:
+		return
+	var fam := SkillCatalog.normalize_imprint(family)
+	if fam not in [SkillCatalog.FAMILY_COLD, SkillCatalog.FAMILY_HOT, SkillCatalog.FAMILY_MAGE]:
+		return
+	imprint_family = fam
+	if not SkillCatalog.is_mage_imprint(fam):
+		mage_element = "fire"
+	var tree := tree_family()
+	for slot in SkillCatalog.HOTKEY_SLOTS:
+		var sid := str(skill_loadout.get(slot, ""))
+		if sid != "" and SkillCatalog.family_of(sid) != tree:
+			skill_loadout[slot] = ""
+	_ensure_innate_skills(false)
+	changed.emit()
+
+
+func set_mage_element_sandbox(element: String) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not _skill_sandbox_active:
+		return
+	if not SkillCatalog.is_mage_imprint(imprint_family):
+		return
+	if element not in SkillCatalog.MAGE_ELEMENTS:
+		return
+	if mage_element == element:
+		return
+	mage_element = element
+	var tree := tree_family()
+	for slot in SkillCatalog.HOTKEY_SLOTS:
+		var sid := str(skill_loadout.get(slot, ""))
+		if sid != "" and SkillCatalog.family_of(sid) != tree:
+			skill_loadout[slot] = ""
+	_ensure_innate_skills(false)
 	changed.emit()
 
 
@@ -304,6 +362,8 @@ func try_comprehend(core_id: String, inventory = null, from_stash: bool = false)
 	var sid := SkillCatalog.migrate_id(core_id)
 	if not SkillCatalog.has_id(sid):
 		return "unknown"
+	if SkillCatalog.family_of(sid) != tree_family():
+		return "wrong_family"
 	if explorer_level < SkillCatalog.level_req(sid):
 		return "level"
 	var already := skill_rank(sid)
@@ -441,12 +501,17 @@ func grant_arena_skills() -> void:
 func _ensure_innate_skills(persist: bool = true) -> void:
 	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	var dirty := false
-	for sid in SkillCatalog.INNATE_IDS:
-		if skill_rank(sid) < 1:
-			learned_skills[sid] = 1
+	imprint_family = SkillCatalog.normalize_imprint(imprint_family)
+	if mage_element not in SkillCatalog.MAGE_ELEMENTS:
+		mage_element = "fire"
+	var innates: Array = SkillCatalog.innate_ids_for_tree(tree_family())
+	for sid in innates:
+		if skill_rank(str(sid)) < 1:
+			learned_skills[str(sid)] = 1
 			dirty = true
-	if str(skill_loadout.get("rmb", "")) == "" and skill_rank("sk_dash") > 0:
-		skill_loadout["rmb"] = "sk_dash"
+	var dash_id := SkillCatalog.dash_skill_for(imprint_family, mage_element)
+	if str(skill_loadout.get("rmb", "")) == "" and skill_rank(dash_id) > 0:
+		skill_loadout["rmb"] = dash_id
 		dirty = true
 	if dirty and persist:
 		save_game()
@@ -966,6 +1031,7 @@ func to_dict() -> Dictionary:
 		"spotlight_level": spotlight_level,
 		"awakening_branch": awakening_branch,
 		"imprint_family": imprint_family,
+		"mage_element": mage_element,
 		"attr_allocated": attr_allocated.duplicate(),
 		"unspent_points": unspent_points,
 		"quest_kill_progress": quest_kill_progress,
@@ -1008,6 +1074,11 @@ func from_dict(data: Dictionary) -> void:
 	imprint_family = str(data.get("imprint_family", "cold_blade"))
 	if imprint_family == "":
 		imprint_family = "cold_blade"
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	imprint_family = SkillCatalog.normalize_imprint(imprint_family)
+	mage_element = str(data.get("mage_element", "fire"))
+	if mage_element not in SkillCatalog.MAGE_ELEMENTS:
+		mage_element = "fire"
 	attr_allocated = data.get("attr_allocated", {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0})
 	if typeof(attr_allocated) != TYPE_DICTIONARY:
 		attr_allocated = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
@@ -1120,6 +1191,7 @@ func reset_progress(with_starter: bool = true) -> void:
 	mind_value = 0
 	gold = 0
 	imprint_family = "cold_blade"
+	mage_element = "fire"
 	attr_allocated = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
 	unspent_points = 0
 	quest_kill_progress = 0

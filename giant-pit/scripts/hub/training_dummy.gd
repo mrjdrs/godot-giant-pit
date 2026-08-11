@@ -56,9 +56,19 @@ func _ready() -> void:
 	_ensure_hud_buttons()
 	PauseMenuScript.install(self)
 	_sync_skill_bar()
+	if not MetaProgress.changed.is_connected(_on_meta_changed):
+		MetaProgress.changed.connect(_on_meta_changed)
+
+
+func _on_meta_changed() -> void:
+	_refresh_imprint_buttons()
+	_refresh_element_buttons()
+	_sync_skill_bar()
 
 
 func _exit_tree() -> void:
+	if MetaProgress.changed.is_connected(_on_meta_changed):
+		MetaProgress.changed.disconnect(_on_meta_changed)
 	_restore_sandbox()
 
 
@@ -133,28 +143,178 @@ func _ensure_sheet_host() -> void:
 
 func _ensure_hud_buttons() -> void:
 	var hud := get_node_or_null("Hint")
-	if hud == null or hud.has_node("HudBtns"):
+	if hud == null:
 		return
+	if not hud.has_node("HudBtns"):
+		var row := HBoxContainer.new()
+		row.name = "HudBtns"
+		row.position = Vector2(12, 108)
+		row.add_theme_constant_override("separation", 8)
+		hud.add_child(row)
+		var skill_btn := Button.new()
+		skill_btn.text = Loc.t("training.open_skills")
+		skill_btn.custom_minimum_size = Vector2(120, 32)
+		skill_btn.add_theme_font_size_override("font_size", 13)
+		skill_btn.pressed.connect(func():
+			if sheet_host:
+				sheet_host.toggle_skills()
+		)
+		row.add_child(skill_btn)
+		var ret_btn := Button.new()
+		ret_btn.text = Loc.t("training.return_hub")
+		ret_btn.custom_minimum_size = Vector2(120, 32)
+		ret_btn.add_theme_font_size_override("font_size", 13)
+		ret_btn.pressed.connect(return_to_hub)
+		row.add_child(ret_btn)
+	_ensure_imprint_switch(hud)
+
+
+func _ensure_imprint_switch(hud: Node) -> void:
+	if hud.has_node("ImprintRow"):
+		_ensure_element_switch(hud)
+		return
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	var row := HBoxContainer.new()
-	row.name = "HudBtns"
-	row.position = Vector2(12, 108)
-	row.add_theme_constant_override("separation", 8)
+	row.name = "ImprintRow"
+	row.position = Vector2(12, 148)
+	row.add_theme_constant_override("separation", 6)
 	hud.add_child(row)
-	var skill_btn := Button.new()
-	skill_btn.text = Loc.t("training.open_skills")
-	skill_btn.custom_minimum_size = Vector2(120, 32)
-	skill_btn.add_theme_font_size_override("font_size", 13)
-	skill_btn.pressed.connect(func():
-		if sheet_host:
-			sheet_host.toggle_skills()
-	)
-	row.add_child(skill_btn)
-	var ret_btn := Button.new()
-	ret_btn.text = Loc.t("training.return_hub")
-	ret_btn.custom_minimum_size = Vector2(120, 32)
-	ret_btn.add_theme_font_size_override("font_size", 13)
-	ret_btn.pressed.connect(return_to_hub)
-	row.add_child(ret_btn)
+	var label := Label.new()
+	label.text = Loc.t("training.imprint_switch")
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(0.92, 0.88, 0.72, 1))
+	row.add_child(label)
+	var opts: Array = [
+		[SkillCatalog.FAMILY_COLD, "training.imprint_cold"],
+		[SkillCatalog.FAMILY_HOT, "training.imprint_hot"],
+		[SkillCatalog.FAMILY_MAGE, "training.imprint_mage"],
+	]
+	for opt in opts:
+		var fam: String = opt[0]
+		var btn := Button.new()
+		btn.name = "Imprint_%s" % fam
+		btn.text = Loc.t(str(opt[1]))
+		btn.custom_minimum_size = Vector2(44, 28)
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.pressed.connect(_on_imprint_pressed.bind(fam))
+		row.add_child(btn)
+	_refresh_imprint_buttons()
+	_ensure_element_switch(hud)
+
+
+func _ensure_element_switch(hud: Node) -> void:
+	if hud.has_node("ElementRow"):
+		_refresh_element_buttons()
+		return
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var row := HBoxContainer.new()
+	row.name = "ElementRow"
+	row.position = Vector2(12, 182)
+	row.add_theme_constant_override("separation", 6)
+	hud.add_child(row)
+	var label := Label.new()
+	label.text = Loc.t("training.element_switch")
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95, 1))
+	row.add_child(label)
+	for elem in SkillCatalog.MAGE_ELEMENTS:
+		var btn := Button.new()
+		btn.name = "Element_%s" % elem
+		btn.text = Loc.t("training.element_%s" % elem)
+		btn.custom_minimum_size = Vector2(36, 28)
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.pressed.connect(_on_element_pressed.bind(str(elem)))
+		row.add_child(btn)
+	_refresh_element_buttons()
+
+
+func _on_imprint_pressed(family: String) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var fam := SkillCatalog.normalize_imprint(family)
+	if MetaProgress.imprint_family == fam and not SkillCatalog.is_mage_imprint(fam):
+		return
+	if MetaProgress.imprint_family == fam and SkillCatalog.is_mage_imprint(fam):
+		_refresh_element_buttons()
+		return
+	MetaProgress.set_imprint_family_sandbox(fam)
+	MetaProgress.fill_all_skills_sandbox()
+	MetaProgress.mind_value = MetaProgress.mind_value_max()
+	_after_sandbox_switch()
+	_refresh_imprint_buttons()
+	_refresh_element_buttons()
+	_on_toast(Loc.t("training.imprint_switched", [Loc.t(_imprint_loc_key(fam))]), 0)
+
+
+func _on_element_pressed(element: String) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not SkillCatalog.is_mage_imprint(MetaProgress.imprint_family):
+		return
+	if MetaProgress.mage_element == element:
+		return
+	MetaProgress.set_mage_element_sandbox(element)
+	MetaProgress.fill_all_skills_sandbox()
+	MetaProgress.mind_value = MetaProgress.mind_value_max()
+	_after_sandbox_switch()
+	_refresh_element_buttons()
+	_on_toast(Loc.t("training.element_switched", [Loc.t("training.element_%s" % element)]), 0)
+
+
+func _after_sandbox_switch() -> void:
+	if player:
+		if player.has_method("_refresh_character_stats"):
+			player._refresh_character_stats(true)
+		if player.get("_skill_cd") is Dictionary:
+			(player.get("_skill_cd") as Dictionary).clear()
+		if player.has_signal("loadout_changed"):
+			player.loadout_changed.emit()
+	if sheet_host and sheet_host.has_method("_refresh_all"):
+		sheet_host._refresh_all()
+	_sync_skill_bar()
+
+
+func _imprint_loc_key(family: String) -> String:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	match SkillCatalog.normalize_imprint(family):
+		SkillCatalog.FAMILY_HOT:
+			return "training.imprint_hot"
+		SkillCatalog.FAMILY_MAGE:
+			return "training.imprint_mage"
+		_:
+			return "training.imprint_cold"
+
+
+func _refresh_imprint_buttons() -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var hud := get_node_or_null("Hint")
+	if hud == null or not hud.has_node("ImprintRow"):
+		return
+	var row: HBoxContainer = hud.get_node("ImprintRow")
+	var cur := SkillCatalog.normalize_imprint(MetaProgress.imprint_family)
+	for child in row.get_children():
+		if child is Button:
+			var btn := child as Button
+			var fam := SkillCatalog.normalize_imprint(str(btn.name).replace("Imprint_", ""))
+			btn.disabled = fam == cur
+			btn.modulate = Color(1.15, 1.05, 0.75, 1) if fam == cur else Color.WHITE
+
+
+func _refresh_element_buttons() -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var hud := get_node_or_null("Hint")
+	if hud == null or not hud.has_node("ElementRow"):
+		return
+	var row: HBoxContainer = hud.get_node("ElementRow")
+	var mage := SkillCatalog.is_mage_imprint(MetaProgress.imprint_family)
+	row.visible = mage
+	if not mage:
+		return
+	var cur := MetaProgress.mage_element
+	for child in row.get_children():
+		if child is Button:
+			var btn := child as Button
+			var elem := str(btn.name).replace("Element_", "")
+			btn.disabled = elem == cur
+			btn.modulate = Color(1.1, 1.15, 1.25, 1) if elem == cur else Color.WHITE
 
 
 func _add_return_pad() -> void:

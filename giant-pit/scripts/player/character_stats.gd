@@ -91,10 +91,10 @@ func recompute() -> void:
 
 	var brand: Dictionary = MindTable.BRAND_STATS.get(_brand, MindTable.BRAND_STATS["iron"])
 	var brand_dmg := float(brand.get("dmg", 1.0))
-	var stance_rank := MetaProgress.skill_rank("sk_stance")
 	var stance_pct := 0.0
+	var stance_rank := MetaProgress.skill_rank("sk_stance")
 	if stance_rank > 0:
-		stance_pct = float(SkillCatalog.passive("sk_stance").get("patk_pct", 0.03)) * float(stance_rank)
+		stance_pct += float(SkillCatalog.passive("sk_stance").get("patk_pct", 0.03)) * float(stance_rank)
 
 	max_hp = BASE_MAX_HP + vitality * HP_PER_VIT + bonus_hp + float(_equip.get("max_hp", 0.0))
 	patk = (BASE_PATK + strength * PATK_PER_STR + bonus_patk) * brand_dmg * (1.0 + float(_equip.get("damage", 0.0))) * (1.0 + stance_pct)

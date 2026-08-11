@@ -5,6 +5,7 @@ const PickupScene = preload("res://scenes/items/pickup.tscn")
 const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 const ProjectileScene = preload("res://scenes/combat/enemy_projectile.tscn")
+const StatusEffects = preload("res://scripts/combat/status_effects.gd")
 
 signal died_with_id(enemy_id: String, meta: Dictionary)
 
@@ -35,8 +36,7 @@ var _stun_t: float = 0.0
 var flash_timer: float = 0.0
 var knockback_velocity: Vector2 = Vector2.ZERO
 var attack_cd: float = 0.0
-var _burn_time: float = 0.0
-var _burn_dps: float = 0.0
+var statuses = StatusEffects.new()
 var _player: Node2D = null
 var _hp_bg: Polygon2D = null
 var _hp_fill: Polygon2D = null
@@ -158,9 +158,9 @@ func _physics_process(delta: float) -> void:
 		if flash_timer <= 0.0:
 			sprite.modulate = Color.WHITE
 
-	if _burn_time > 0.0:
-		_burn_time -= delta
-		hp = maxf(hp - _burn_dps * delta, 0.0)
+	var st: Dictionary = statuses.tick(delta)
+	if float(st.get("dot_damage", 0.0)) > 0.0:
+		hp = maxf(hp - float(st["dot_damage"]), 0.0)
 		_update_hp_label()
 		if hp <= 0.0:
 			_die()
@@ -179,15 +179,22 @@ func _physics_process(delta: float) -> void:
 		move_and_slide()
 		return
 
+	if bool(st.get("frozen", false)):
+		knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, 900.0 * delta)
+		velocity = knockback_velocity
+		move_and_slide()
+		return
+
 	if _player == null or not is_instance_valid(_player):
 		_find_player()
 
 	var wish := Vector2.ZERO
+	var move_m := float(st.get("move_mult", 1.0))
 	if _player != null:
 		var to_player: Vector2 = _player.global_position - global_position
 		var dist := to_player.length()
 		if dist < aggro_range and dist > 12.0:
-			wish = to_player.normalized() * move_speed
+			wish = to_player.normalized() * move_speed * move_m
 		if _is_ranged() and dist < aggro_range and dist > 70.0 and attack_cd <= 0.0:
 			_try_shoot_player(to_player)
 			attack_cd = attack_cooldown * 1.4
@@ -222,19 +229,21 @@ func _try_hit_player() -> void:
 	if _player != null and _player.has_method("take_damage"):
 		if bool(_player.get("invincible")):
 			return
-		_player.take_damage(contact_damage, global_position)
+		_player.take_damage(contact_damage * statuses.outgoing_mult(), global_position)
 
 
 func _on_hurt(hitbox: Area2D) -> void:
-	var dmg: float = float(hitbox.get("damage"))
-	var knock: float = float(hitbox.get("knockback_force"))
+	var dmg: float = _hit_float(hitbox, "damage")
+	var knock: float = _hit_float(hitbox, "knockback_force")
 	var src = hitbox.get("source")
 	if _poise_broken:
 		dmg *= BREAK_DMG_MULT
-	if armor > 0.0 and dmg > 0.0:
-		dmg = maxf(dmg - armor, dmg * 0.35)
+	dmg *= statuses.damage_taken_mult()
+	var eff_armor := maxf(armor - statuses.pdef_cut(), 0.0)
+	if eff_armor > 0.0 and dmg > 0.0:
+		dmg = maxf(dmg - eff_armor, dmg * 0.35)
 	if max_poise > 0.0 and not _poise_broken:
-		var pdmg: float = float(hitbox.get("poise_damage"))
+		var pdmg: float = _hit_float(hitbox, "poise_damage")
 		if pdmg <= 0.0:
 			pdmg = knock * 0.08
 		poise = maxf(poise - pdmg, 0.0)
@@ -251,14 +260,49 @@ func _on_hurt(hitbox: Area2D) -> void:
 		dir = (global_position - (src as Node2D).global_position).normalized()
 	knockback_velocity = dir * knock
 
-	if src != null and src.get("runes") != null and src.runes.has_burn():
-		_burn_time = 2.0
-		_burn_dps = src.runes.burn_dps()
+	_apply_hit_statuses(hitbox, src)
 
 	if hp <= 0.0:
 		_die()
 	else:
 		AudioManager.sfx_hurt_enemy()
+
+
+func apply_status(kind: String, payload: Dictionary = {}) -> void:
+	statuses.apply(kind, payload)
+
+
+func apply_burn(dps: float, duration: float = 1.6) -> void:
+	statuses.apply(StatusEffects.KIND_BURN, {"dps": dps, "duration": duration})
+
+
+func _apply_hit_statuses(hitbox: Object, src) -> void:
+	if hitbox != null and hitbox.has_meta("status_kind"):
+		var kind := str(hitbox.get_meta("status_kind"))
+		var payload: Dictionary = {}
+		if hitbox.has_meta("status_payload"):
+			payload = hitbox.get_meta("status_payload")
+		statuses.apply(kind, payload)
+		return
+	if src != null and src.has_method("on_hit_apply_status"):
+		src.on_hit_apply_status(self, hitbox)
+		return
+	if src != null and src.get("runes") != null and src.runes.has_burn():
+		statuses.apply(StatusEffects.KIND_BURN, {"dps": src.runes.burn_dps(), "duration": 2.0})
+	elif src != null and src.has_method("has_burn") and src.has_burn():
+		var dur: float = float(src.burn_time()) if src.has_method("burn_time") else 2.2
+		statuses.apply(StatusEffects.KIND_BURN, {"dps": float(src.burn_dps()), "duration": dur})
+
+
+func _hit_float(hitbox: Object, prop: String, fallback: float = 0.0) -> float:
+	if hitbox == null:
+		return fallback
+	var v = hitbox.get(prop)
+	match typeof(v):
+		TYPE_FLOAT, TYPE_INT:
+			return float(v)
+		_:
+			return fallback
 
 
 func _die() -> void:

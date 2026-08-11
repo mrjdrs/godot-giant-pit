@@ -3,6 +3,7 @@ extends Control
 
 const Equipment = preload("res://scripts/meta/equipment.gd")
 const MindTable = preload("res://scripts/meta/mind_table.gd")
+const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 
 signal closed
 
@@ -367,7 +368,12 @@ func _set_equip_weapon() -> void:
 		icon.texture = load(path)
 	else:
 		icon.texture = load("res://assets/ui/icons/stats/slot_weapon.png")
-	var imprint := Loc.t("stat.imprint_blade") if Loc.has_key("stat.imprint_blade") else "冷兵器·刀"
+	var imprint_key := SkillCatalog.imprint_display_key(MetaProgress.imprint_family)
+	var imprint := Loc.t(imprint_key) if Loc.has_key(imprint_key) else Loc.t("stat.imprint_blade")
+	if SkillCatalog.is_mage_imprint(MetaProgress.imprint_family):
+		var elem_key := "stat.mage_element.%s" % MetaProgress.mage_element
+		if Loc.has_key(elem_key):
+			imprint = Loc.t("stat.mage_element", [Loc.t(elem_key)])
 	slot.get_node("Pad/Content/Line").text = "%s %s·%s" % [imprint, Loc.t("stat.weapon"), brand_name]
 
 

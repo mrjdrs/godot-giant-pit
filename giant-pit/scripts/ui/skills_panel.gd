@@ -151,12 +151,19 @@ func _build_ui() -> void:
 	body.add_theme_constant_override("separation", 12)
 	add_child(body)
 
+	var tree_scroll := ScrollContainer.new()
+	tree_scroll.name = "TreeScroll"
+	tree_scroll.custom_minimum_size = Vector2(300, 0)
+	tree_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tree_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tree_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	tree_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	body.add_child(tree_scroll)
+
 	var tree_wrap := Control.new()
 	tree_wrap.name = "TreeWrap"
-	tree_wrap.custom_minimum_size = Vector2(300, 0)
-	tree_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tree_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(tree_wrap)
+	tree_wrap.custom_minimum_size = Vector2(300, 320)
+	tree_scroll.add_child(tree_wrap)
 
 	_tree_lines = Control.new()
 	_tree_lines.name = "TreeLines"
@@ -165,26 +172,8 @@ func _build_ui() -> void:
 	_tree_lines.draw.connect(_draw_tree_lines)
 	tree_wrap.add_child(_tree_lines)
 
-	for i in 4:
-		var row_lab := Label.new()
-		row_lab.text = "Lv%d" % SkillCatalog.row_level(i)
-		row_lab.position = Vector2(4, TREE_ORIGIN.y + float(i) * TREE_CELL.y + 10.0)
-		row_lab.size = Vector2(36, 20)
-		row_lab.add_theme_font_size_override("font_size", 11)
-		row_lab.add_theme_color_override("font_color", Color(0.7, 0.66, 0.55, 1))
-		tree_wrap.add_child(row_lab)
-	var col_names := ["skill.col.slash", "skill.col.break", "skill.col.force"]
-	for c in 3:
-		var col_lab := Label.new()
-		col_lab.text = Loc.t(col_names[c])
-		col_lab.position = Vector2(TREE_ORIGIN.x + float(c) * TREE_CELL.x + 8.0, 4)
-		col_lab.size = Vector2(56, 18)
-		col_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		col_lab.add_theme_font_size_override("font_size", 12)
-		col_lab.add_theme_color_override("font_color", ACCENT_GOLD)
-		tree_wrap.add_child(col_lab)
-
-	for sid in SkillCatalog.tree_ids():
+	_rebuild_tree_chrome(tree_wrap)
+	for sid in SkillCatalog.tree_ids(_tree_family()):
 		var icon := _make_tree_icon(str(sid))
 		tree_wrap.add_child(icon)
 		_tree_icons[str(sid)] = icon
@@ -412,8 +401,8 @@ func _refresh_tab_style() -> void:
 	$TabRow/TabAttr.add_theme_stylebox_override("normal", off if _tab_skill else on)
 	$TabRow/TabAttr.add_theme_stylebox_override("hover", on)
 	$TabRow/TabAttr.add_theme_stylebox_override("pressed", on)
-	if has_node("Body/TreeWrap"):
-		$Body/TreeWrap.visible = _tab_skill
+	if has_node("Body/TreeScroll"):
+		$Body/TreeScroll.visible = _tab_skill
 	if has_node("Body/AttrScroll"):
 		$Body/AttrScroll.visible = not _tab_skill
 
@@ -437,9 +426,20 @@ func _refresh_header() -> void:
 		else:
 			$CrystalLabel.text = Loc.t("skill.crystal_count", [MetaProgress.stash_count(SkillCatalog.CRYSTAL_ID)])
 	if has_node("Title"):
-		$Title.text = Loc.t("skill.panel_title")
+		$Title.text = Loc.t(SkillCatalog.panel_title_key(_tree_family()))
 	if has_node("Body/RightCol/TrainRow"):
 		$Body/RightCol/TrainRow.visible = _training_mode
+	## 烙印/元素切换后重建树节点
+	if has_node("Body/TreeScroll/TreeWrap") and _built:
+		var wrap: Control = $Body/TreeScroll/TreeWrap
+		var fam := _tree_family()
+		var need_rebuild := false
+		for sid in _tree_icons.keys():
+			if SkillCatalog.family_of(str(sid)) != fam:
+				need_rebuild = true
+				break
+		if _tree_icons.is_empty() or need_rebuild or _tree_icons.size() != SkillCatalog.tree_ids(fam).size():
+			_rebuild_tree_icons(wrap)
 
 
 func _refresh_skill_slots() -> void:
@@ -500,10 +500,70 @@ func _refresh_tree() -> void:
 		_tree_lines.queue_redraw()
 
 
+func _tree_family() -> String:
+	var elem := "fire"
+	if MetaProgress.get("mage_element") != null:
+		elem = str(MetaProgress.mage_element)
+	return SkillCatalog.active_tree_family(MetaProgress.imprint_family, elem)
+
+
+func _rebuild_tree_chrome(tree_wrap: Control) -> void:
+	## 清旧行列标签，再按当前 family 的 bounds 重建
+	for c in tree_wrap.get_children():
+		if str(c.name).begins_with("ColLab") or str(c.name).begins_with("RowLab"):
+			c.queue_free()
+	var fam := _tree_family()
+	var bounds: Dictionary = SkillCatalog.tree_bounds(fam)
+	var cols := int(bounds.get("cols", 3))
+	var rows := int(bounds.get("rows", 4))
+	var col_names: Array = SkillCatalog.col_name_keys(fam)
+	for i in rows:
+		var row_lab := Label.new()
+		row_lab.name = "RowLab%d" % i
+		row_lab.text = "Lv%d" % SkillCatalog.row_level(i)
+		row_lab.position = Vector2(4, TREE_ORIGIN.y + float(i) * TREE_CELL.y + 10.0)
+		row_lab.size = Vector2(36, 20)
+		row_lab.add_theme_font_size_override("font_size", 11)
+		row_lab.add_theme_color_override("font_color", Color(0.7, 0.66, 0.55, 1))
+		tree_wrap.add_child(row_lab)
+	for c in cols:
+		var col_lab := Label.new()
+		col_lab.name = "ColLab%d" % c
+		var key := str(col_names[c]) if c < col_names.size() else "skill.col.extra_%d" % c
+		col_lab.text = Loc.t(key)
+		col_lab.position = Vector2(TREE_ORIGIN.x + float(c) * TREE_CELL.x + 8.0, 4)
+		col_lab.size = Vector2(56, 18)
+		col_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col_lab.add_theme_font_size_override("font_size", 12)
+		col_lab.add_theme_color_override("font_color", ACCENT_GOLD)
+		tree_wrap.add_child(col_lab)
+	tree_wrap.custom_minimum_size = Vector2(
+		TREE_ORIGIN.x + float(cols) * TREE_CELL.x + 24.0,
+		TREE_ORIGIN.y + float(rows) * TREE_CELL.y + 24.0
+	)
+
+
+func _rebuild_tree_icons(tree_wrap: Control) -> void:
+	for sid in _tree_icons.keys():
+		var p: Panel = _tree_icons[sid]
+		if p != null and is_instance_valid(p):
+			p.queue_free()
+	_tree_icons.clear()
+	_rebuild_tree_chrome(tree_wrap)
+	var fam := _tree_family()
+	for sid in SkillCatalog.tree_ids(fam):
+		var icon := _make_tree_icon(str(sid))
+		tree_wrap.add_child(icon)
+		_tree_icons[str(sid)] = icon
+	_selected_id = ""
+	if _tree_lines:
+		_tree_lines.queue_redraw()
+
+
 func _draw_tree_lines() -> void:
 	if _tree_lines == null:
 		return
-	for sid in SkillCatalog.tree_ids():
+	for sid in SkillCatalog.tree_ids(_tree_family()):
 		var pre: Dictionary = SkillCatalog.prereq(str(sid))
 		if pre.is_empty():
 			continue
@@ -651,21 +711,18 @@ func _prereq_text(sid: String) -> String:
 
 func _rank_preview(sid: String, rank: int) -> String:
 	var lines: PackedStringArray = []
-	if sid == "sk_chain":
-		var p: Dictionary = SkillCatalog.passive(sid)
-		var pct := (float(p.get("light_dmg", 0.06)) + float(p.get("light_dmg_per", 0.04)) * float(maxi(rank - 1, 0))) * 100.0
-		if rank > 0:
-			lines.append(Loc.t("sk.chain.rank", [int(round(pct))]))
-	elif sid == "sk_stance":
-		var p2: Dictionary = SkillCatalog.passive(sid)
-		var pct2 := int(round(float(p2.get("patk_pct", 0.03)) * float(maxi(rank, 1)) * 100.0))
-		if rank > 0:
-			lines.append(Loc.t("sk.stance.rank", [pct2, pct2]))
-	elif sid == "sk_ironwall":
-		var p3: Dictionary = SkillCatalog.passive(sid)
-		var dr := int(round(float(p3.get("dr", 0.04)) * float(maxi(rank, 1)) * 100.0))
-		if rank > 0:
-			lines.append(Loc.t("sk.ironwall.rank", [dr]))
+	var pas: Dictionary = SkillCatalog.passive(sid) if SkillCatalog.is_passive(sid) else {}
+	if not pas.is_empty() and pas.has("light_dmg") and rank > 0:
+		var pct := (float(pas.get("light_dmg", 0.06)) + float(pas.get("light_dmg_per", 0.04)) * float(maxi(rank - 1, 0))) * 100.0
+		lines.append("普攻 +%d%%" % int(round(pct)))
+	if not pas.is_empty() and pas.has("patk_pct") and rank > 0:
+		lines.append("物攻 +%d%%" % int(round(float(pas.get("patk_pct", 0.03)) * float(maxi(rank, 1)) * 100.0)))
+	if not pas.is_empty() and pas.has("dr") and rank > 0:
+		lines.append("减伤 %d%%" % int(round(float(pas.get("dr", 0.04)) * float(maxi(rank, 1)) * 100.0)))
+	if not pas.is_empty() and pas.has("burn_dps") and rank > 0:
+		lines.append("灼烧 %.0f/s" % (float(pas.get("burn_dps", 2.0)) + float(pas.get("burn_dps_per", 1.0)) * float(maxi(rank - 1, 0))))
+	if not pas.is_empty() and pas.has("mind_cut") and rank > 0:
+		lines.append("念力消耗 -%d%%" % int(round(float(pas.get("mind_cut", 0.04)) * float(rank) * 100.0)))
 	elif SkillCatalog.is_active(sid) and rank > 0:
 		var c: Dictionary = SkillCatalog.combat(sid, rank)
 		lines.append("伤害 %.0f" % float(c.get("damage", 0.0)))
