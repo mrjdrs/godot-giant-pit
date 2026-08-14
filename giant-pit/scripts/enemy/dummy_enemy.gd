@@ -18,6 +18,7 @@ var statuses = StatusEffects.new()
 func _ready() -> void:
 	collision_layer = 4
 	collision_mask = 1
+	add_to_group("enemy")
 	hp = max_hp
 	if sprite:
 		sprite.scale = Vector2(0.7, 0.7)

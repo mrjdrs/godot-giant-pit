@@ -12,25 +12,29 @@ const IMPRINT_OPTIONS := [
 		"id": SkillCatalog.FAMILY_COLD,
 		"title": "menu.imprint_cold",
 		"desc": "menu.imprint_cold_desc",
-		"portrait": "res://assets/characters/barbarian_cold_weapon.png",
+		"portrait": "res://assets/characters/war_scar_melee.png",
+		"portrait_fallback": "res://assets/characters/barbarian_cold_weapon.png",
 	},
 	{
 		"id": SkillCatalog.FAMILY_HOT,
 		"title": "menu.imprint_hot",
 		"desc": "menu.imprint_hot_desc",
-		"portrait": "res://assets/characters/officer_hot_weapon.png",
+		"portrait": "res://assets/characters/hawk_eye_ranger.png",
+		"portrait_fallback": "res://assets/characters/officer_hot_weapon.png",
 	},
 	{
 		"id": SkillCatalog.FAMILY_MAGE,
 		"title": "menu.imprint_mage",
 		"desc": "menu.imprint_mage_desc",
-		"portrait": "res://assets/characters/mage_magic_staff.png",
+		"portrait": "res://assets/characters/element_caster.png",
+		"portrait_fallback": "res://assets/characters/mage_magic_staff.png",
 	},
 	{
 		"id": SkillCatalog.FAMILY_AFFINITY,
 		"title": "menu.imprint_affinity",
 		"desc": "menu.imprint_affinity_desc",
-		"portrait": "res://assets/characters/forest_child_nature.png",
+		"portrait": "res://assets/characters/affinity_binder.png",
+		"portrait_fallback": "res://assets/characters/forest_child_nature.png",
 	},
 ]
 
@@ -38,10 +42,12 @@ var _view: View = View.ROOT
 var _pending_slot: int = -1
 var _selected_imprint: String = SkillCatalog.FAMILY_COLD
 var _selected_element: String = "fire"
+var _selected_affinity: String = "animal"
 var _confirm: Panel = null
 var _slot_list: VBoxContainer = null
 var _imprint_panel: Control = null
 var _element_row: HBoxContainer = null
+var _affinity_row: HBoxContainer = null
 var _hint: Label = null
 var _btn_continue: Button = null
 var _btn_new: Button = null
@@ -305,6 +311,7 @@ func _on_new_slot(slot: int, occupied: bool) -> void:
 	_pending_slot = slot
 	_selected_imprint = SkillCatalog.FAMILY_COLD
 	_selected_element = "fire"
+	_selected_affinity = "animal"
 	if occupied:
 		_ask_confirm(Loc.t("menu.confirm_overwrite", [slot]), func(): _set_view(View.IMPRINT))
 	else:
@@ -390,6 +397,33 @@ func _build_imprint_panel() -> Control:
 		btn.pressed.connect(_on_element_picked.bind(str(elem)))
 		_element_row.add_child(btn)
 
+	var affinity_wrap := VBoxContainer.new()
+	affinity_wrap.name = "AffinityWrap"
+	affinity_wrap.add_theme_constant_override("separation", 6)
+	panel.add_child(affinity_wrap)
+
+	var affinity_label := Label.new()
+	affinity_label.name = "AffinityLabel"
+	affinity_label.text = Loc.t("menu.pick_affinity")
+	affinity_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	affinity_label.add_theme_font_size_override("font_size", 13)
+	affinity_label.add_theme_color_override("font_color", Color(0.78, 0.72, 0.6, 1))
+	affinity_wrap.add_child(affinity_label)
+
+	_affinity_row = HBoxContainer.new()
+	_affinity_row.name = "AffinityRow"
+	_affinity_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_affinity_row.add_theme_constant_override("separation", 6)
+	affinity_wrap.add_child(_affinity_row)
+	for kind in SkillCatalog.AFFINITY_KINDS:
+		var abtn := Button.new()
+		abtn.name = "Affinity_%s" % kind
+		abtn.text = Loc.t("training.affinity_%s" % kind)
+		abtn.custom_minimum_size = Vector2(64, 28)
+		abtn.add_theme_font_size_override("font_size", 13)
+		abtn.pressed.connect(_on_affinity_picked.bind(str(kind)))
+		_affinity_row.add_child(abtn)
+
 	var confirm := _make_btn(Loc.t("menu.imprint_confirm"), _confirm_imprint)
 	confirm.custom_minimum_size = Vector2(0, 40)
 	panel.add_child(confirm)
@@ -416,8 +450,11 @@ func _make_imprint_card(opt: Dictionary) -> Control:
 	portrait.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	var tex_path := str(opt.get("portrait", ""))
+	var fallback := str(opt.get("portrait_fallback", ""))
 	if ResourceLoader.exists(tex_path):
 		portrait.texture = load(tex_path)
+	elif ResourceLoader.exists(fallback):
+		portrait.texture = load(fallback)
 	body.add_child(portrait)
 
 	var title := Label.new()
@@ -462,12 +499,21 @@ func _refresh_imprint_panel() -> void:
 		for btn in _element_row.get_children():
 			if btn is Button:
 				btn.disabled = str(btn.name).trim_prefix("Element_") == _selected_element
+	var affinity_wrap: VBoxContainer = _imprint_panel.get_node_or_null("AffinityWrap")
+	if affinity_wrap:
+		affinity_wrap.visible = SkillCatalog.is_affinity_imprint(_selected_imprint)
+	if _affinity_row:
+		for btn in _affinity_row.get_children():
+			if btn is Button:
+				btn.disabled = str(btn.name).trim_prefix("Affinity_") == _selected_affinity
 
 
 func _on_imprint_picked(family: String) -> void:
 	_selected_imprint = SkillCatalog.normalize_imprint(family)
 	if not SkillCatalog.is_mage_imprint(_selected_imprint):
 		_selected_element = "fire"
+	if not SkillCatalog.is_affinity_imprint(_selected_imprint):
+		_selected_affinity = "animal"
 	_refresh_imprint_panel()
 
 
@@ -477,9 +523,15 @@ func _on_element_picked(element: String) -> void:
 	_refresh_imprint_panel()
 
 
+func _on_affinity_picked(kind: String) -> void:
+	if kind in SkillCatalog.AFFINITY_KINDS:
+		_selected_affinity = kind
+	_refresh_imprint_panel()
+
+
 func _confirm_imprint() -> void:
 	if _pending_slot < 1:
 		return
-	if not MetaProgress.new_game_with_imprint(_pending_slot, _selected_imprint, _selected_element):
+	if not MetaProgress.new_game_with_imprint(_pending_slot, _selected_imprint, _selected_element, _selected_affinity):
 		return
 	get_tree().change_scene_to_file(HUB_SCENE)

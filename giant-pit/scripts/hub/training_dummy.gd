@@ -172,6 +172,7 @@ func _ensure_hud_buttons() -> void:
 func _ensure_imprint_switch(hud: Node) -> void:
 	if hud.has_node("ImprintRow"):
 		_ensure_element_switch(hud)
+		_ensure_affinity_switch(hud)
 		return
 	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	var row := HBoxContainer.new()
@@ -201,6 +202,7 @@ func _ensure_imprint_switch(hud: Node) -> void:
 		row.add_child(btn)
 	_refresh_imprint_buttons()
 	_ensure_element_switch(hud)
+	_ensure_affinity_switch(hud)
 
 
 func _ensure_element_switch(hud: Node) -> void:
@@ -229,6 +231,32 @@ func _ensure_element_switch(hud: Node) -> void:
 	_refresh_element_buttons()
 
 
+func _ensure_affinity_switch(hud: Node) -> void:
+	if hud.has_node("AffinityRow"):
+		_refresh_affinity_buttons()
+		return
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var row := HBoxContainer.new()
+	row.name = "AffinityRow"
+	row.position = Vector2(12, 216)
+	row.add_theme_constant_override("separation", 6)
+	hud.add_child(row)
+	var label := Label.new()
+	label.text = Loc.t("training.affinity_switch")
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", Color(0.82, 0.92, 0.78, 1))
+	row.add_child(label)
+	for kind in SkillCatalog.AFFINITY_KINDS:
+		var btn := Button.new()
+		btn.name = "Affinity_%s" % kind
+		btn.text = Loc.t("training.affinity_%s" % kind)
+		btn.custom_minimum_size = Vector2(48, 28)
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.pressed.connect(_on_affinity_pressed.bind(str(kind)))
+		row.add_child(btn)
+	_refresh_affinity_buttons()
+
+
 func _on_imprint_pressed(family: String) -> void:
 	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	var fam := SkillCatalog.normalize_imprint(family)
@@ -243,6 +271,7 @@ func _on_imprint_pressed(family: String) -> void:
 	_after_sandbox_switch()
 	_refresh_imprint_buttons()
 	_refresh_element_buttons()
+	_refresh_affinity_buttons()
 	_on_toast(Loc.t("training.imprint_switched", [Loc.t(_imprint_loc_key(fam))]), 0)
 
 
@@ -260,10 +289,26 @@ func _on_element_pressed(element: String) -> void:
 	_on_toast(Loc.t("training.element_switched", [Loc.t("training.element_%s" % element)]), 0)
 
 
+func _on_affinity_pressed(kind: String) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not SkillCatalog.is_affinity_imprint(MetaProgress.imprint_family):
+		return
+	if MetaProgress.affinity_kind == kind:
+		return
+	MetaProgress.set_affinity_kind_sandbox(kind)
+	_after_sandbox_switch()
+	_refresh_affinity_buttons()
+	_on_toast(Loc.t("training.affinity_switched", [Loc.t("training.affinity_%s" % kind)]), 0)
+
+
 func _after_sandbox_switch() -> void:
 	if player:
+		if player.has_method("_apply_imprint_visual"):
+			player._apply_imprint_visual()
 		if player.has_method("_refresh_character_stats"):
 			player._refresh_character_stats(true)
+		if player.has_method("_sync_affinity_companion"):
+			player._sync_affinity_companion()
 		if player.get("_skill_cd") is Dictionary:
 			(player.get("_skill_cd") as Dictionary).clear()
 		if player.has_signal("loadout_changed"):
@@ -280,6 +325,8 @@ func _imprint_loc_key(family: String) -> String:
 			return "training.imprint_hot"
 		SkillCatalog.FAMILY_MAGE:
 			return "training.imprint_mage"
+		SkillCatalog.FAMILY_AFFINITY:
+			return "training.imprint_affinity"
 		_:
 			return "training.imprint_cold"
 
@@ -316,6 +363,25 @@ func _refresh_element_buttons() -> void:
 			var elem := str(btn.name).replace("Element_", "")
 			btn.disabled = elem == cur
 			btn.modulate = Color(1.1, 1.15, 1.25, 1) if elem == cur else Color.WHITE
+
+
+func _refresh_affinity_buttons() -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	var hud := get_node_or_null("Hint")
+	if hud == null or not hud.has_node("AffinityRow"):
+		return
+	var row: HBoxContainer = hud.get_node("AffinityRow")
+	var aff := SkillCatalog.is_affinity_imprint(MetaProgress.imprint_family)
+	row.visible = aff
+	if not aff:
+		return
+	var cur := MetaProgress.affinity_kind
+	for child in row.get_children():
+		if child is Button:
+			var btn := child as Button
+			var kind := str(btn.name).replace("Affinity_", "")
+			btn.disabled = kind == cur
+			btn.modulate = Color(1.05, 1.2, 1.05, 1) if kind == cur else Color.WHITE
 
 
 func _add_return_pad() -> void:

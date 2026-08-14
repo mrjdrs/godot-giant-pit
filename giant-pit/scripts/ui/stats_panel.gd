@@ -377,6 +377,10 @@ func _set_equip_weapon() -> void:
 		var elem_key := "stat.mage_element.%s" % MetaProgress.mage_element
 		if Loc.has_key(elem_key):
 			imprint = Loc.t("stat.mage_element", [Loc.t(elem_key)])
+	elif SkillCatalog.is_affinity_imprint(MetaProgress.imprint_family):
+		var kind_key := "stat.affinity_kind.%s" % MetaProgress.affinity_kind
+		if Loc.has_key(kind_key):
+			imprint = Loc.t("stat.affinity_kind", [Loc.t(kind_key)])
 	slot.get_node("Pad/Content/Line").text = "%s %s·%s" % [imprint, Loc.t("stat.weapon"), brand_name]
 
 

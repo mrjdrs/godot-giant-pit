@@ -87,11 +87,16 @@ func sfx_weapon_attack(weapon_family: String = "blade") -> void:
 				play_sfx("res://assets/audio/sfx_blade_chop.wav")
 			else:
 				play_stream(_get_chop_stream())
-		"gun", "hot_gun":
-			if ResourceLoader.exists("res://assets/audio/sfx_blade_chop.wav"):
-				play_sfx("res://assets/audio/sfx_blade_chop.wav", -4.0, 1.35)
-			elif ResourceLoader.exists("res://assets/audio/sfx_interact.wav"):
-				play_sfx("res://assets/audio/sfx_interact.wav", -2.0, 1.4)
+		"bow", "gun", "hot_gun":
+			if ResourceLoader.exists("res://assets/audio/sfx_interact.wav"):
+				play_sfx("res://assets/audio/sfx_interact.wav", -3.0, 1.55)
+			elif ResourceLoader.exists("res://assets/audio/sfx_blade_chop.wav"):
+				play_sfx("res://assets/audio/sfx_blade_chop.wav", -6.0, 1.55)
+			else:
+				play_sfx("res://assets/audio/sfx_blade.wav")
+		"nature":
+			if ResourceLoader.exists("res://assets/audio/sfx_pickup.wav"):
+				play_sfx("res://assets/audio/sfx_pickup.wav", -5.0, 1.15)
 			else:
 				play_sfx("res://assets/audio/sfx_blade.wav")
 		"mage", "mage_flame":

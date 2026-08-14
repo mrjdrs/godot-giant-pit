@@ -17,6 +17,10 @@ SOURCES = {
     "hot_gun_8dir.png": "officer_hot_weapon.png",
     "mage_8dir.png": "mage_magic_staff.png",
     "affinity_8dir.png": "forest_child_nature.png",
+    "weapon/blade_8view.png": "war_scar_melee.png",
+    "weapon/bow_8view.png": "hawk_eye_ranger.png",
+    "weapon/element_8view.png": "element_caster.png",
+    "weapon/focus_8view.png": "affinity_binder.png",
 }
 
 
@@ -98,6 +102,7 @@ def main() -> None:
     for out_name, src_name in SOURCES.items():
         sheet = build_sheet(src_name)
         out_path = OUT_DIR / out_name
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         sheet.save(out_path)
         print(f"wrote {out_path} ({sheet.width}x{sheet.height})")
 

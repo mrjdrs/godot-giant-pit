@@ -29,6 +29,7 @@ shape = SubResource("RectangleShape2D_body")
 position = Vector2(0, 0)
 
 [node name="BladeSprite" type="Sprite2D" parent="BladePivot"]
+visible = false
 position = Vector2(14, 0)
 texture = ExtResource("3_blade")
 texture_filter = 0

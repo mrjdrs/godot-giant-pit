@@ -42,14 +42,23 @@ enum AttackPhase { NONE, LIGHT_WINDUP, LIGHT_ACTIVE, LIGHT_RECOVERY, SKILL_WINDU
 
 const BASE_MOVE_SPEED := 150.0
 const BASE_MAX_HP := 100.0
-const VISUAL_SCALE := 1.0
-const IMPRINT_8VIEW_FRAME := Vector2i(64, 64)
-const IMPRINT_8VIEW := {
-	"cold_blade": "res://assets/characters/imprint/cold_blade_8view.png",
-	"hot_gun": "res://assets/characters/imprint/hot_gun_8view.png",
-	"mage": "res://assets/characters/imprint/mage_8view.png",
-	"affinity_nature": "res://assets/characters/imprint/affinity_8view.png",
+const VISUAL_SCALE := 0.48
+const VISUAL_FLAT := 0.85
+const IMPRINT_4DIR_FRAME := Vector2i(64, 88)
+const IMPRINT_4DIR_STRIDE := 66
+const IMPRINT_FOOT_OFFSET := Vector2(0, -32)
+const WEAPON_4DIR := {
+	"blade": "res://assets/characters/imprint/weapon/blade_4dir.png",
+	"bow": "res://assets/characters/imprint/weapon/bow_4dir.png",
+	"element": "res://assets/characters/imprint/weapon/element_4dir.png",
+	"focus": "res://assets/characters/imprint/weapon/focus_4dir.png",
+	"axe": "res://assets/characters/imprint/weapon/blade_4dir.png",
+	"sword": "res://assets/characters/imprint/weapon/blade_4dir.png",
+	"hammer": "res://assets/characters/imprint/weapon/blade_4dir.png",
+	"crossbow": "res://assets/characters/imprint/weapon/bow_4dir.png",
+	"spear": "res://assets/characters/imprint/weapon/bow_4dir.png",
 }
+const CompanionScene := preload("res://scenes/combat/affinity_companion.tscn")
 const LIGHT_COMBO_MAX := 3
 const EASE_IN := 0
 const EASE_OUT := 1
@@ -122,9 +131,11 @@ var _swing_dur: float = 0.0
 var _swing_elapsed: float = 0.0
 var _swing_ease: int = EASE_SMOOTH
 var _blade_fx: Node2D = null
-var _alt_weapon: Polygon2D = null
-var _alt_weapon_glow: Polygon2D = null
 var _pose_recoil: float = 0.0
+var _hp_regen_acc: float = 0.0
+var _companion: Node2D = null
+var _companion_cd: float = 0.0
+var held_weapon: String = "blade"
 var _ghost_cd: float = 0.0
 var _pending_skill: String = ""
 var _pending_skill_slot: String = ""
@@ -180,10 +191,9 @@ var weapon_family: String = "blade" ## blade=大刀
 var _tex_idle: Texture2D
 var _tex_run: Texture2D
 var _tex_explorer: Texture2D
-var _tex_8view: Texture2D
-var _view_dirs_8: Array[Vector2] = [
-	Vector2(0, 1), Vector2(1, 1).normalized(), Vector2(1, 0), Vector2(1, -1).normalized(),
-	Vector2(0, -1), Vector2(-1, -1).normalized(), Vector2(-1, 0), Vector2(-1, 1).normalized(),
+var _tex_4dir: Texture2D
+var _view_dirs_4: Array[Vector2] = [
+	Vector2(0, 1), Vector2(1, 0), Vector2(0, -1), Vector2(-1, 0),
 ]
 
 
@@ -198,9 +208,9 @@ func _ready() -> void:
 	_load_textures()
 	_apply_visual_scale()
 	_setup_blade_fx()
-	_sync_weapon_family()
-	_ensure_alt_weapon_visual()
+	_apply_imprint_visual()
 	_apply_blade_visual()
+	_sync_affinity_companion()
 	if has_node("Camera2D"):
 		_camera_origin = $Camera2D.offset
 	inventory.changed.connect(func(): inventory_changed.emit())
@@ -212,11 +222,19 @@ func _ready() -> void:
 	hp_changed.emit(hp, max_hp)
 
 
+func _body_scale(extra_x: float = 0.0, extra_y: float = 0.0) -> Vector2:
+	return Vector2(
+		VISUAL_SCALE * (1.0 + extra_x),
+		VISUAL_SCALE * VISUAL_FLAT * (1.0 + extra_y)
+	)
+
+
 func _apply_visual_scale() -> void:
-	var s := Vector2(VISUAL_SCALE, VISUAL_SCALE)
+	var s := _body_scale()
 	if sprite:
 		sprite.scale = s
 	if blade_sprite:
+		blade_sprite.visible = false
 		blade_sprite.scale = s
 		blade_sprite.position = Vector2(10, 0)
 
@@ -232,59 +250,48 @@ func _setup_blade_fx() -> void:
 
 
 func _load_textures() -> void:
-	_tex_8view = _load_imprint_8view()
-	if _tex_8view == null and ResourceLoader.exists("res://assets/characters/player/player_explorer.png"):
+	_sync_held_weapon()
+	_tex_4dir = _load_imprint_4dir()
+	if _tex_4dir == null and ResourceLoader.exists("res://assets/characters/player/player_explorer.png"):
 		_tex_explorer = load("res://assets/characters/player/player_explorer.png")
 	_tex_idle = load("res://assets/characters/player/side/player_idle.png")
 	_tex_run = load("res://assets/characters/player/side/player_run.png")
 	if sprite:
-		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_apply_pose_texture()
 
 
-func _load_imprint_8view() -> Texture2D:
-	var fam := MetaProgress.imprint_family
-	if SkillCatalog.is_mage_imprint(fam):
-		fam = SkillCatalog.FAMILY_MAGE
-	var path := str(IMPRINT_8VIEW.get(fam, ""))
-	if path == "" or not ResourceLoader.exists(path):
-		return null
-	return load(path)
+func _load_imprint_4dir() -> Texture2D:
+	var weapon := held_weapon if held_weapon != "" else SkillCatalog.default_held_weapon(MetaProgress.imprint_family)
+	var path := str(WEAPON_4DIR.get(weapon, WEAPON_4DIR.get("blade", "")))
+	if path != "" and ResourceLoader.exists(path):
+		return load(path)
+	return null
 
 
 func _facing_view_index() -> int:
 	var dir := facing
 	if dir.length_squared() < 0.001:
 		dir = Vector2.RIGHT
-	var ax := absf(dir.x)
-	var ay := absf(dir.y)
-	if ax > 0.01 and ay > 0.01:
-		dir = Vector2(signf(dir.x), signf(dir.y)).normalized()
-	else:
-		dir = dir.normalized()
-	var best := 0
-	var best_dot := -2.0
-	for i in _view_dirs_8.size():
-		var dot := dir.dot(_view_dirs_8[i])
-		if dot > best_dot:
-			best_dot = dot
-			best = i
-	return best
+	if absf(dir.x) >= absf(dir.y):
+		return 1 if dir.x >= 0.0 else 3
+	return 0 if dir.y >= 0.0 else 2
 
 
-func _apply_8view_frame() -> void:
-	if _tex_8view == null:
+func _apply_4dir_frame() -> void:
+	if _tex_4dir == null:
 		return
 	var idx := _facing_view_index()
-	var fw := float(IMPRINT_8VIEW_FRAME.x)
-	var fh := float(IMPRINT_8VIEW_FRAME.y)
-	sprite.texture = _tex_8view
-	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var fw := float(IMPRINT_4DIR_FRAME.x)
+	var fh := float(IMPRINT_4DIR_FRAME.y)
+	var stride := float(IMPRINT_4DIR_STRIDE)
+	sprite.texture = _tex_4dir
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	sprite.region_enabled = true
-	sprite.region_rect = Rect2(idx * fw, 0.0, fw, fh)
+	sprite.region_rect = Rect2(idx * stride, 0.0, fw, fh)
 	sprite.flip_h = false
 	sprite.centered = true
-	sprite.offset = Vector2.ZERO
+	sprite.offset = IMPRINT_FOOT_OFFSET
 
 
 func _physics_process(delta: float) -> void:
@@ -303,6 +310,8 @@ func _physics_process(delta: float) -> void:
 	_tick_player_statuses(delta)
 	_tick_attack(delta)
 	_tick_mind_regen(delta)
+	_tick_hp_regen(delta)
+	_tick_companion(delta)
 	if _skill_invuln_t > 0.0:
 		_skill_invuln_t -= delta
 		if _skill_invuln_t <= 0.0 and state != State.DASH:
@@ -348,6 +357,33 @@ func _tick_mind_regen(delta: float) -> void:
 	_mind_regen_acc -= float(pts)
 	MetaProgress.restore_mind_value(pts, false)
 	GameBus.pub("mind_changed", {"current": MetaProgress.mind_value, "max": MetaProgress.mind_value_max()})
+
+
+func _tick_hp_regen(delta: float) -> void:
+	var rate := float(stats.hp_regen)
+	if rate <= 0.0 or hp >= max_hp:
+		_hp_regen_acc = 0.0
+		return
+	_hp_regen_acc += rate * delta
+	if _hp_regen_acc < 1.0:
+		return
+	var heal := _hp_regen_acc
+	_hp_regen_acc = 0.0
+	hp = minf(hp + heal, max_hp)
+	hp_changed.emit(hp, max_hp)
+
+
+func _tick_companion(delta: float) -> void:
+	if not _is_affinity_imprint():
+		if _companion != null and is_instance_valid(_companion):
+			_companion.queue_free()
+			_companion = null
+		return
+	if _companion != null and is_instance_valid(_companion):
+		return
+	_companion_cd = maxf(_companion_cd - delta, 0.0)
+	if _companion_cd <= 0.0:
+		_spawn_affinity_companion()
 
 
 func _tick_camera_shake(delta: float) -> void:
@@ -453,7 +489,7 @@ func _process_dash(delta: float) -> void:
 
 
 func _move_speed() -> float:
-	var s := BASE_MOVE_SPEED * move_speed_mult
+	var s := BASE_MOVE_SPEED * move_speed_mult * float(stats.move_mult)
 	if in_mud:
 		s *= 0.55
 	s *= 1.0 + 0.03 * float(MetaProgress.winch_level)
@@ -482,7 +518,7 @@ func _is_mage_imprint() -> bool:
 
 
 func _is_affinity_imprint() -> bool:
-	return MetaProgress.imprint_family == SkillCatalog.FAMILY_AFFINITY
+	return SkillCatalog.is_affinity_imprint(MetaProgress.imprint_family)
 
 
 func _is_caster_imprint() -> bool:
@@ -719,7 +755,7 @@ func _skill_cd_factor() -> float:
 
 
 func _passive_dr() -> float:
-	var dr := 0.0
+	var dr := float(stats.imprint_dr)
 	for pid in ["sk_ironwall", "hw_brace", "mgf_ward"]:
 		var r := MetaProgress.skill_rank(pid)
 		if r > 0:
@@ -769,10 +805,10 @@ func apply_meta_brand(p_brand: String = "iron") -> void:
 	brand_quality = p_brand
 	equip_bonus = MetaProgress.total_equipment_bonuses()
 	awakening_branch = MetaProgress.awakening_branch
-	_sync_weapon_family()
-	_ensure_alt_weapon_visual()
+	_apply_imprint_visual()
 	_refresh_character_stats(false)
 	_refresh_metal_load()
+	_sync_affinity_companion()
 
 
 func _refresh_metal_load() -> void:
@@ -834,7 +870,7 @@ func set_camera_limits(left: float, top: float, right: float, bottom: float) -> 
 
 func _update_visuals() -> void:
 	blade_pivot.rotation = facing.angle()
-	if _tex_8view == null:
+	if _tex_4dir == null:
 		sprite.flip_h = facing.x < 0.0
 	if state != State.ATTACK_LIGHT and state != State.ATTACK_SKILL:
 		if absf(blade_swing_deg) > 0.6:
@@ -842,7 +878,7 @@ func _update_visuals() -> void:
 		else:
 			blade_swing_deg = 0.0
 		sprite.rotation = lerp_angle(sprite.rotation, 0.0, 0.28)
-		sprite.scale = sprite.scale.lerp(Vector2(VISUAL_SCALE, VISUAL_SCALE), 0.28)
+		sprite.scale = sprite.scale.lerp(_body_scale(), 0.28)
 		sprite.position.x = lerpf(sprite.position.x, 0.0, 0.28)
 		sprite.position.y = lerpf(sprite.position.y, 0.0, 0.28)
 		_pose_recoil = maxf(_pose_recoil - 0.15, 0.0)
@@ -852,8 +888,8 @@ func _update_visuals() -> void:
 
 
 func _apply_pose_texture() -> void:
-	if _tex_8view:
-		_apply_8view_frame()
+	if _tex_4dir:
+		_apply_4dir_frame()
 		return
 	var tex: Texture2D = _tex_explorer if _tex_explorer else _tex_idle
 	if state == State.MOVE and _tex_run and _tex_explorer == null:
@@ -865,44 +901,8 @@ func _apply_pose_texture() -> void:
 
 
 func _apply_blade_visual() -> void:
-	var hide_now := state == State.DASH or (_is_blade_imprint() and _skill_hide_blade and _attack_phase == AttackPhase.SKILL_WINDUP)
-	if _is_blade_imprint():
-		blade_sprite.rotation_degrees = BLADE_ART_OFFSET_DEG + blade_swing_deg
-		blade_sprite.visible = not hide_now
-		if state == State.ATTACK_LIGHT and _attack_phase == AttackPhase.LIGHT_ACTIVE:
-			var u := 1.0
-			if _swing_dur > 0.001:
-				u = clampf(_swing_elapsed / _swing_dur, 0.0, 1.0)
-			var glow := 1.0 + 0.48 * sin(u * PI)
-			blade_sprite.modulate = Color(glow, glow * 0.94, 0.72 + 0.28 * glow, 1.0)
-		elif state == State.ATTACK_SKILL and _attack_phase == AttackPhase.SKILL_ACTIVE:
-			blade_sprite.modulate = Color(1.28, 1.12, 0.82, 1.0)
-		else:
-			blade_sprite.modulate = Color.WHITE
-		if _alt_weapon:
-			_alt_weapon.visible = false
-			_alt_weapon_glow.visible = false
-	else:
+	if blade_sprite:
 		blade_sprite.visible = false
-		if _alt_weapon:
-			_alt_weapon.visible = not hide_now
-			_alt_weapon_glow.visible = not hide_now
-			var kick := 0.0
-			if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
-				kick = -blade_swing_deg * 0.45 - _pose_recoil * 14.0
-			else:
-				kick = blade_swing_deg * 0.35
-			_alt_weapon.rotation_degrees = kick
-			_alt_weapon_glow.rotation_degrees = kick
-			_alt_weapon.position = Vector2(8, 0)
-			_alt_weapon_glow.position = Vector2(8, 0)
-			if state == State.ATTACK_LIGHT or state == State.ATTACK_SKILL:
-				if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
-					_alt_weapon.modulate = Color(1.15, 1.05, 0.85, 1.0)
-				else:
-					_alt_weapon.modulate = Color(1.2, 0.85, 0.55, 1.0)
-			else:
-				_alt_weapon.modulate = Color.WHITE
 	_apply_attack_pose()
 
 
@@ -922,10 +922,7 @@ func _apply_attack_pose() -> void:
 			_pose_recoil = 1.0
 		## 火铳后坐：身体略向后仰
 		sprite.rotation = lerp_angle(sprite.rotation, -attack_locked_facing.x * 0.12 * _pose_recoil, 0.35)
-		sprite.scale = sprite.scale.lerp(
-			Vector2(VISUAL_SCALE * (1.0 + squash), VISUAL_SCALE * (1.0 - squash * 0.4)),
-			0.4
-		)
+		sprite.scale = sprite.scale.lerp(_body_scale(squash, -squash * 0.4), 0.4)
 		sprite.position.x = lerpf(sprite.position.x, -attack_locked_facing.x * 3.0 * _pose_recoil, 0.35)
 		sprite.position.y = lerpf(sprite.position.y, 0.0, 0.4)
 		return
@@ -937,10 +934,7 @@ func _apply_attack_pose() -> void:
 			squash = 0.06
 			rot_k = 0.1
 		sprite.rotation = lerp_angle(sprite.rotation, deg_to_rad(blade_swing_deg * rot_k) * 0.5, 0.4)
-		sprite.scale = sprite.scale.lerp(
-			Vector2(VISUAL_SCALE * (1.0 + squash * 0.6), VISUAL_SCALE * (1.0 + squash * 0.35)),
-			0.38
-		)
+		sprite.scale = sprite.scale.lerp(_body_scale(squash * 0.6, squash * 0.35), 0.38)
 		if _skill_jump > 0.0 and state == State.ATTACK_SKILL and _attack_phase == AttackPhase.SKILL_WINDUP and _skill_windup_dur > 0.001:
 			var u := 1.0 - clampf(_attack_timer / _skill_windup_dur, 0.0, 1.0)
 			sprite.position.y = -_skill_jump * sin(u * PI * 0.85)
@@ -959,10 +953,7 @@ func _apply_attack_pose() -> void:
 		rot_k = 0.14
 	var target_rot := deg_to_rad(blade_swing_deg * rot_k)
 	sprite.rotation = lerp_angle(sprite.rotation, target_rot, 0.42)
-	sprite.scale = sprite.scale.lerp(
-		Vector2(VISUAL_SCALE * (1.0 + squash), VISUAL_SCALE * (1.0 - squash * 0.55)),
-		0.38
-	)
+	sprite.scale = sprite.scale.lerp(_body_scale(squash, -squash * 0.55), 0.38)
 	if _skill_jump > 0.0 and state == State.ATTACK_SKILL:
 		if _attack_phase == AttackPhase.SKILL_WINDUP and _skill_windup_dur > 0.001:
 			var u2 := 1.0 - clampf(_attack_timer / _skill_windup_dur, 0.0, 1.0)
@@ -1701,7 +1692,7 @@ func _aoe_damage_at(pos: Vector2, radius: float, dmg: float, knock: float, poise
 	q.collide_with_areas = true
 	q.collide_with_bodies = false
 	var hits := space.intersect_shape(q, 32)
-	var rolled := _roll_attack_damage(dmg)
+	var rolled := _roll_attack_damage(dmg * float(stats.aoe_mult))
 	for h in hits:
 		var area = h.get("collider")
 		if area == null or not area.has_method("take_hit"):
@@ -1740,7 +1731,7 @@ func _spawn_bolt(dir: Vector2, dmg: float, pierce: int = 1, speed: float = 320.0
 	var col: Color = _skill_fx_def.get("trail_color", Color(1.0, 0.92, 0.62, 1.0))
 	var shape := _proj_shape_for_imprint()
 	if bolt.has_method("setup"):
-		bolt.setup(dir * speed, dmg, self, 90.0, pierce, col, shape)
+		bolt.setup(dir * speed, dmg * float(stats.bolt_mult), self, 90.0, pierce, col, shape)
 	var payload_combat: Dictionary = _skill_combat if combat == null else combat
 	_attach_status_meta(bolt, payload_combat)
 	if bool(payload_combat.get("spawn_zone", false)):
@@ -1773,6 +1764,8 @@ func _play_imprint_cast_fx(style: String, dir: Vector2) -> void:
 			_spawn_rune_cast(global_position + dir * 12.0, 18.0 if style != "mage_nova" else 30.0)
 		if style in ["mage_nova", "mage_blink", ""]:
 			_spawn_cast_flare(global_position + dir * 10.0, 14.0)
+	elif _is_affinity_imprint():
+		_spawn_cast_flare(global_position + dir * 10.0, 12.0)
 
 
 func _spawn_muzzle_flash(dir: Vector2) -> void:
@@ -1807,8 +1800,8 @@ func _spawn_flame_arc(dir: Vector2) -> void:
 
 func _spawn_gun_beam(dir: Vector2, length: float) -> void:
 	var fx := _spawn_world_fx(DrawSlashFxScript)
-	## 贯膛：青白激光而非刀芒金黄
-	var col := Color(0.65, 0.95, 1.0, 0.95)
+	## 贯矛：木褐锋线而非刀芒金黄
+	var col := Color(0.82, 0.62, 0.32, 0.95)
 	var width := float(_skill_fx_def.get("trail_width", 8.0)) * 0.45
 	if fx.has_method("setup"):
 		fx.setup(global_position + dir * 8.0, dir, length, col, width, 0.14)
@@ -1983,7 +1976,7 @@ func _roll_attack_damage(base: float) -> float:
 	var dmg := base
 	if stats.crit_enabled and randf() < stats.crit:
 		dmg *= 1.0 + stats.critdmg
-	var ls := float(_brand_stats().get("lifesteal", 0.0))
+	var ls := float(_brand_stats().get("lifesteal", 0.0)) + float(stats.imprint_lifesteal)
 	if ls > 0.0:
 		_pending_lifesteal += dmg * ls
 	return dmg
@@ -2021,7 +2014,10 @@ func _spawn_hit_spark(pos: Vector2) -> void:
 	var col := Color(1.0, 0.85, 0.35, 1.0)
 	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
 		style = "gun"
-		col = Color(0.7, 0.95, 1.0, 1.0)
+		col = Color(0.82, 0.62, 0.32, 1.0)
+	elif _is_affinity_imprint():
+		style = "nature"
+		col = Color(0.55, 0.88, 0.42, 1.0) if MetaProgress.affinity_kind != "plant" else Color(0.62, 0.92, 0.38, 1.0)
 	elif _is_mage_imprint():
 		style = _mage_hit_spark_style()
 		col = _mage_element_fx()["spark"]
@@ -2153,16 +2149,28 @@ func _on_skills_changed() -> void:
 func _on_meta_changed() -> void:
 	equip_bonus = MetaProgress.total_equipment_bonuses()
 	awakening_branch = MetaProgress.awakening_branch
-	_tex_8view = _load_imprint_8view()
-	_sync_weapon_family()
-	_ensure_alt_weapon_visual()
+	_apply_imprint_visual()
 	_refresh_character_stats(true)
 	_refresh_metal_load()
+	_sync_affinity_companion()
+
+
+func _apply_imprint_visual() -> void:
+	_sync_held_weapon()
+	_sync_weapon_family()
+	_tex_4dir = _load_imprint_4dir()
+	_apply_pose_texture()
+	if blade_sprite:
+		blade_sprite.visible = false
+
+
+func _sync_held_weapon() -> void:
+	held_weapon = SkillCatalog.default_held_weapon(MetaProgress.imprint_family)
 
 
 func _sync_weapon_family() -> void:
 	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
-		weapon_family = "gun"
+		weapon_family = "bow"
 	elif _is_mage_imprint():
 		weapon_family = "mage"
 	elif _is_affinity_imprint():
@@ -2177,9 +2185,9 @@ func _is_blade_imprint() -> bool:
 
 func _proj_shape_for_imprint() -> String:
 	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
-		return "tracer"
+		return "arrow"
 	if _is_affinity_imprint():
-		return "acid_blob"
+		return "vine"
 	if _is_mage_imprint():
 		match _mage_element():
 			"ice":
@@ -2201,51 +2209,39 @@ func _style_uses_blade_slash(style: String) -> bool:
 	return style in ["", "dash_slash", "smash_wave", "whirl", "riposte", "myriad", "draw_slash", "ground_slam", "bolt"]
 
 
-func _ensure_alt_weapon_visual() -> void:
-	if blade_pivot == null:
+func _sync_affinity_companion() -> void:
+	if not _is_affinity_imprint():
+		if _companion != null and is_instance_valid(_companion):
+			_companion.queue_free()
+		_companion = null
 		return
-	if _alt_weapon == null:
-		_alt_weapon_glow = Polygon2D.new()
-		_alt_weapon_glow.name = "AltWeaponGlow"
-		_alt_weapon_glow.z_index = 9
-		blade_pivot.add_child(_alt_weapon_glow)
-		_alt_weapon = Polygon2D.new()
-		_alt_weapon.name = "AltWeapon"
-		_alt_weapon.z_index = 10
-		blade_pivot.add_child(_alt_weapon)
-	if _is_blade_imprint():
-		_alt_weapon.visible = false
-		_alt_weapon_glow.visible = false
+	if _companion != null and is_instance_valid(_companion):
+		if _companion.has_method("apply_kind"):
+			_companion.apply_kind(MetaProgress.affinity_kind)
 		return
-	_alt_weapon.visible = true
-	_alt_weapon_glow.visible = true
-	if MetaProgress.imprint_family == SkillCatalog.FAMILY_HOT:
-		_alt_weapon.color = Color(0.55, 0.78, 0.82, 1.0)
-		_alt_weapon.polygon = PackedVector2Array([
-			Vector2(-4, -3), Vector2(22, -2), Vector2(26, 0), Vector2(22, 2), Vector2(-4, 3), Vector2(-6, 0),
-		])
-		_alt_weapon_glow.color = Color(1.0, 0.72, 0.35, 0.4)
-		_alt_weapon_glow.polygon = PackedVector2Array([
-			Vector2(-2, -5), Vector2(24, -4), Vector2(28, 0), Vector2(24, 4), Vector2(-2, 5),
-		])
-	elif _is_affinity_imprint():
-		_alt_weapon.color = Color(0.42, 0.78, 0.38, 1.0)
-		_alt_weapon.polygon = PackedVector2Array([
-			Vector2(-2, -3), Vector2(16, -2), Vector2(20, 0), Vector2(16, 2), Vector2(-2, 3),
-		])
-		_alt_weapon_glow.color = Color(0.72, 1.0, 0.55, 0.5)
-		_alt_weapon_glow.polygon = PackedVector2Array([
-			Vector2(14, -7), Vector2(22, -5), Vector2(24, 0), Vector2(22, 5), Vector2(14, 7), Vector2(12, 0),
-		])
-	else:
-		_alt_weapon.color = Color(0.55, 0.32, 0.75, 1.0)
-		_alt_weapon.polygon = PackedVector2Array([
-			Vector2(-2, -2), Vector2(18, -1.5), Vector2(20, 0), Vector2(18, 1.5), Vector2(-2, 2),
-		])
-		_alt_weapon_glow.color = Color(1.0, 0.45, 0.2, 0.55)
-		_alt_weapon_glow.polygon = PackedVector2Array([
-			Vector2(16, -6), Vector2(24, -4), Vector2(26, 0), Vector2(24, 4), Vector2(16, 6), Vector2(14, 0),
-		])
+	_companion_cd = 0.0
+	_spawn_affinity_companion()
+
+
+func _spawn_affinity_companion() -> void:
+	if not _is_affinity_imprint() or CompanionScene == null:
+		return
+	if _companion != null and is_instance_valid(_companion):
+		return
+	var parent_n := get_parent()
+	if parent_n == null:
+		return
+	_companion = CompanionScene.instantiate()
+	parent_n.add_child(_companion)
+	_companion.global_position = global_position + Vector2(-18, 10)
+	if _companion.has_method("setup"):
+		_companion.setup(self, MetaProgress.affinity_kind)
+	_companion_cd = 6.0
+
+
+func _on_companion_died() -> void:
+	_companion = null
+	_companion_cd = 6.0
 
 
 func _refresh_character_stats(keep_ratio: bool) -> void:

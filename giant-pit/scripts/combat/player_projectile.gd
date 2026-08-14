@@ -33,15 +33,15 @@ func setup(p_velocity: Vector2, p_damage: float, p_source: Node2D, p_knock: floa
 	_shape = p_shape
 	rotation = velocity.angle()
 	match _shape:
-		"tracer", "light_beam":
-			lifetime = 0.55 if _shape == "tracer" else 0.45
+		"tracer", "light_beam", "arrow":
+			lifetime = 0.7 if _shape == "arrow" else (0.55 if _shape == "tracer" else 0.45)
 		"flame":
 			lifetime = 0.95
 		"shard":
 			lifetime = 1.05
-		"acid_blob":
-			lifetime = 1.2
-			_arc_gravity = 520.0
+		"acid_blob", "vine":
+			lifetime = 1.15
+			_arc_gravity = 420.0 if _shape == "vine" else 520.0
 			_arc_vel = p_velocity
 		"shadow_bolt":
 			lifetime = 0.85
@@ -63,8 +63,8 @@ func _ready() -> void:
 		var cs := CollisionShape2D.new()
 		var rect := RectangleShape2D.new()
 		match _shape:
-			"tracer", "light_beam":
-				rect.size = Vector2(22 if _shape == "tracer" else 28, 4 if _shape == "tracer" else 6)
+			"tracer", "light_beam", "arrow":
+				rect.size = Vector2(24 if _shape == "arrow" else (22 if _shape == "tracer" else 28), 5 if _shape == "arrow" else (4 if _shape == "tracer" else 6))
 			"flame", "orb", "acid_blob":
 				rect.size = Vector2(16, 16)
 			"shard", "shadow_bolt":
@@ -73,18 +73,18 @@ func _ready() -> void:
 				rect.size = Vector2(22, 12)
 		cs.shape = rect
 		add_child(cs)
-	if _shape == "tracer":
+	if _shape in ["tracer", "arrow"]:
 		_trail = Line2D.new()
 		_trail.z_index = -1
-		_trail.width = 2.0
-		_trail.default_color = Color(0.55, 0.9, 0.95, 0.65)
+		_trail.width = 2.2 if _shape == "arrow" else 2.0
+		_trail.default_color = Color(0.82, 0.62, 0.32, 0.6) if _shape == "arrow" else Color(0.55, 0.9, 0.95, 0.65)
 		_trail.begin_cap_mode = Line2D.LINE_CAP_ROUND
 		_trail.end_cap_mode = Line2D.LINE_CAP_ROUND
 		add_child(_trail)
 		_trail.points = PackedVector2Array([
 			Vector2(8, 0), Vector2(-6, 0), Vector2(-16, 0), Vector2(-28, 0), Vector2(-40, 0),
 		])
-	elif _shape in ["flame", "shard", "shadow_bolt", "light_beam", "acid_blob"]:
+	elif _shape in ["flame", "shard", "shadow_bolt", "light_beam", "acid_blob", "vine"]:
 		_trail = Line2D.new()
 		_trail.z_index = -1
 		_trail.width = 7.0 if _shape == "flame" else 4.0
@@ -120,6 +120,30 @@ func _apply_visual() -> void:
 		core.name = "Core"
 		add_child(core)
 	match _shape:
+		"arrow":
+			vis.color = Color(0.72, 0.48, 0.22, 1.0)
+			vis.polygon = PackedVector2Array([
+				Vector2(-10, -1.4), Vector2(8, -1.0), Vector2(14, 0), Vector2(8, 1.0), Vector2(-10, 1.4),
+			])
+			glow.color = Color(0.9, 0.72, 0.38, 0.32)
+			glow.polygon = PackedVector2Array([
+				Vector2(-14, -3.2), Vector2(10, -2.2), Vector2(16, 0), Vector2(10, 2.2), Vector2(-14, 3.2),
+			])
+			core.visible = true
+			core.color = Color(0.92, 0.88, 0.7, 1.0)
+			core.polygon = PackedVector2Array([
+				Vector2(6, -2.2), Vector2(14, 0), Vector2(6, 2.2), Vector2(8, 0),
+			])
+		"vine":
+			vis.color = Color(0.38, 0.78, 0.28, 1.0)
+			vis.polygon = PackedVector2Array([
+				Vector2(-8, -3), Vector2(2, -6), Vector2(10, -1), Vector2(8, 4), Vector2(-4, 4), Vector2(-9, 0),
+			])
+			glow.color = Color(0.55, 0.95, 0.4, 0.35)
+			glow.polygon = PackedVector2Array([
+				Vector2(-11, -5), Vector2(3, -9), Vector2(13, -2), Vector2(10, 6), Vector2(-6, 6), Vector2(-12, 0),
+			])
+			core.visible = false
 		"tracer":
 			## 细长曳光：青白芯 + 琥珀壳
 			vis.color = Color(1.0, 0.78, 0.35, 1.0)
@@ -245,7 +269,7 @@ func _physics_process(delta: float) -> void:
 		if _ember_cd <= 0.0:
 			_ember_cd = 0.045
 			_spawn_ember()
-	elif _shape == "acid_blob":
+	elif _shape in ["acid_blob", "vine"]:
 		_arc_vel.y += _arc_gravity * delta
 		position += _arc_vel * delta
 		rotation = _arc_vel.angle()
@@ -279,7 +303,7 @@ func _physics_process(delta: float) -> void:
 			_trail.default_color = Color(_col.r, _col.g, _col.b, 0.45 * (1.0 - _alive / lifetime))
 	else:
 		position += velocity * delta
-		if _shape == "tracer":
+		if _shape in ["tracer", "arrow"]:
 			rotation = velocity.angle()
 			if _trail:
 				_trail.default_color = Color(0.55, 0.9, 0.95, 0.55 * (1.0 - _alive / lifetime))

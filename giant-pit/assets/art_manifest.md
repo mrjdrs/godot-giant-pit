@@ -46,6 +46,19 @@
 
 ---
 
+## Imprint portraits & weapon-baked 8-view（现行）
+
+| ID | 名称 | 路径 |
+|----|------|------|
+| `war_scar_melee` | 战痕立绘 | `res://assets/characters/war_scar_melee.png` |
+| `hawk_eye_ranger` | 鹰眼立绘 | `res://assets/characters/hawk_eye_ranger.png` |
+| `element_caster` | 元素立绘 | `res://assets/characters/element_caster.png` |
+| `affinity_binder` | 亲和立绘 | `res://assets/characters/affinity_binder.png` |
+| `blade_4dir` | 持刀 四向 | `res://assets/characters/imprint/weapon/blade_4dir.png` |
+| `bow_4dir` | 持弓 四向 | `res://assets/characters/imprint/weapon/bow_4dir.png` |
+| `element_4dir` | 元素姿 四向 | `res://assets/characters/imprint/weapon/element_4dir.png` |
+| `focus_4dir` | 契约姿 四向 | `res://assets/characters/imprint/weapon/focus_4dir.png` |
+
 ## Characters（legacy 俯视 · 归档参考）
 
 | ID | 名称 | 路径 |

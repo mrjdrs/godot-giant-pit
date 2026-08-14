@@ -41,6 +41,12 @@ var agi_enabled: bool = true
 var int_enabled: bool = true
 var crit_enabled: bool = false
 var critdmg_enabled: bool = false
+var aoe_mult: float = 1.0
+var bolt_mult: float = 1.0
+var hp_regen: float = 0.0
+var imprint_lifesteal: float = 0.0
+var move_mult: float = 1.0
+var imprint_dr: float = 0.0
 
 var _brand: String = "iron"
 var _equip: Dictionary = {"max_hp": 0.0, "defense": 0.0, "damage": 0.0}
@@ -99,10 +105,51 @@ func recompute() -> void:
 	if stance_rank > 0:
 		stance_pct += float(SkillCatalog.passive("sk_stance").get("patk_pct", 0.03)) * float(stance_rank)
 
-	max_hp = BASE_MAX_HP + vitality * HP_PER_VIT + bonus_hp + float(_equip.get("max_hp", 0.0))
+	aoe_mult = 1.0
+	bolt_mult = 1.0
+	hp_regen = 0.0
+	imprint_lifesteal = 0.0
+	move_mult = 1.0
+	imprint_dr = 0.0
+	var hp_mult := 1.0
+	var pdef_bonus := 0.0
+	var fam := SkillCatalog.normalize_imprint(MetaProgress.imprint_family)
+	match fam:
+		SkillCatalog.FAMILY_COLD:
+			strength += 2.0
+			vitality += 2.0
+			hp_mult = 1.25
+			pdef_bonus = 2.0
+			hp_regen = 2.0
+			imprint_lifesteal = 0.04
+			imprint_dr = 0.08
+		SkillCatalog.FAMILY_HOT:
+			agility += 2.0
+			hp_mult = 0.80
+			pdef_bonus = -1.0
+			move_mult = 1.12
+			bolt_mult = 1.12
+			aoe_mult = 0.88
+		SkillCatalog.FAMILY_MAGE:
+			intellect += 2.0
+			hp_mult = 0.80
+			pdef_bonus = -1.0
+			aoe_mult = 1.15
+			bolt_mult = 0.90
+		SkillCatalog.FAMILY_AFFINITY:
+			spirit += 2.0
+			hp_mult = 0.80
+			pdef_bonus = -1.0
+			bolt_mult = 0.85
+
+	var grove_r := MetaProgress.skill_rank("nat_grove")
+	if grove_r > 0:
+		hp_regen += float(SkillCatalog.passive("nat_grove").get("hp_regen", 0.4)) * float(grove_r)
+
+	max_hp = (BASE_MAX_HP + vitality * HP_PER_VIT + bonus_hp + float(_equip.get("max_hp", 0.0))) * hp_mult
 	patk = (BASE_PATK + strength * PATK_PER_STR + bonus_patk) * brand_dmg * (1.0 + float(_equip.get("damage", 0.0))) * (1.0 + stance_pct)
 	matk = (BASE_MATK + intellect * MATK_PER_INT) * brand_dmg * (1.0 + float(_equip.get("damage", 0.0)) * 0.5)
-	pdef = BASE_PDEF + float(_equip.get("defense", 0.0)) + vitality * 0.15
+	pdef = BASE_PDEF + float(_equip.get("defense", 0.0)) + vitality * 0.15 + pdef_bonus
 	carry_cap = BASE_CARRY + vitality * CARRY_PER_VIT
 	changed.emit()
 

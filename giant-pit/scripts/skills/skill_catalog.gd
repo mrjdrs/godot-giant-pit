@@ -1,5 +1,5 @@
 extends RefCounted
-## 烙印技能树（冷兵器·刀 / 热武器·火铳 / 魔元素五系）。晶核加点，释放耗念力。
+## 烙印技能树（战痕·刀 / 鹰眼·弓 / 元素五系 / 亲和）。晶核加点，释放耗念力。
 
 const HOTKEY_SLOTS := ["rmb", "q", "e", "r", "f", "c"]
 const CRYSTAL_ID := "crystal_core"
@@ -7,10 +7,15 @@ const COL_SLASH := 0 ## 斩
 const COL_BREAK := 1 ## 破
 const COL_FORCE := 2 ## 势
 const ROW_LEVELS := [1, 5, 10, 15, 20]
-const FAMILY_COLD := "cold_blade"
-const FAMILY_HOT := "hot_gun"
-const FAMILY_MAGE := "mage" ## 烙印：魔（兼容旧 mage_flame）
-const FAMILY_AFFINITY := "affinity_nature" ## 烙印：亲和力·森林之子
+const FAMILY_COLD := "cold_blade" ## 展示：战痕烙印
+const FAMILY_HOT := "hot_gun" ## 展示：鹰眼烙印
+const FAMILY_MAGE := "mage" ## 展示：元素烙印（兼容旧 mage_flame）
+const FAMILY_AFFINITY := "affinity_nature" ## 展示：亲和烙印
+const AFFINITY_KINDS := ["animal", "plant"]
+const HELD_BLADE := "blade"
+const HELD_BOW := "bow"
+const HELD_ELEMENT := "element"
+const HELD_FOCUS := "focus"
 const FAMILY_MAGE_FLAME_LEGACY := "mage_flame"
 const FAMILY_MAGE_FIRE := "mage_fire"
 const FAMILY_MAGE_ICE := "mage_ice"
@@ -2732,7 +2737,7 @@ const DEFS := {
 	"nat_grove": {
 		"family": FAMILY_AFFINITY,
 		"name_key": "nat.grove",
-		"icon": "res://assets/ui/icons/skills/blade_chain.png",
+		"icon": "res://assets/ui/icons/skills/nat_grove.png",
 		"kind": "passive",
 		"col": COL_SLASH,
 		"row": 0,
@@ -2743,12 +2748,12 @@ const DEFS := {
 		"cast_cost": 0,
 		"cooldown": 0.0,
 		"loud": false,
-		"passive": {"light_dmg": 0.05, "light_dmg_per": 0.035, "hp_regen": 0.4},
+		"passive": {"light_dmg": 0.05, "light_dmg_per": 0.035, "hp_regen": 0.4, "companion_hp": 6.0, "companion_dmg": 0.12},
 	},
 	"nat_leafstep": {
 		"family": FAMILY_AFFINITY,
 		"name_key": "nat.leafstep",
-		"icon": "res://assets/ui/icons/skills/blade_dash.png",
+		"icon": "res://assets/ui/icons/skills/nat_leafstep.png",
 		"kind": "active",
 		"col": COL_FORCE,
 		"row": 0,
@@ -2791,7 +2796,7 @@ const DEFS := {
 	"nat_thorn": {
 		"family": FAMILY_AFFINITY,
 		"name_key": "nat.thorn",
-		"icon": "res://assets/ui/icons/skills/blade_bolt.png",
+		"icon": "res://assets/ui/icons/skills/nat_thorn.png",
 		"kind": "active",
 		"col": COL_SLASH,
 		"row": 1,
@@ -2826,7 +2831,7 @@ const DEFS := {
 	"nat_whirl": {
 		"family": FAMILY_AFFINITY,
 		"name_key": "nat.whirl",
-		"icon": "res://assets/ui/icons/skills/blade_whirl.png",
+		"icon": "res://assets/ui/icons/skills/nat_whirl.png",
 		"kind": "active",
 		"col": COL_BREAK,
 		"row": 1,
@@ -2886,6 +2891,22 @@ static func normalize_imprint(family: String) -> String:
 
 static func is_mage_imprint(family: String) -> bool:
 	return normalize_imprint(family) == FAMILY_MAGE
+
+
+static func is_affinity_imprint(family: String) -> bool:
+	return normalize_imprint(family) == FAMILY_AFFINITY
+
+
+static func default_held_weapon(family: String) -> String:
+	match normalize_imprint(family):
+		FAMILY_HOT:
+			return HELD_BOW
+		FAMILY_MAGE:
+			return HELD_ELEMENT
+		FAMILY_AFFINITY:
+			return HELD_FOCUS
+		_:
+			return HELD_BLADE
 
 
 static func mage_skill_family(element: String = "fire") -> String:

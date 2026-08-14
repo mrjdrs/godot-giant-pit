@@ -23,6 +23,7 @@ var mind_value: int = 0 ## 放技能 / 传送消耗
 var gold: int = 0
 var imprint_family: String = "cold_blade"
 var mage_element: String = "fire" ## fire|ice|acid|dark|light；仅烙印为 mage 时生效
+var affinity_kind: String = "animal" ## animal|plant；仅烙印为 affinity 时生效
 var attr_allocated: Dictionary = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
 var unspent_points: int = 0
 var quest_kill_progress: int = 0
@@ -210,6 +211,7 @@ func snapshot_skill_state() -> Dictionary:
 		"mind_value": mind_value,
 		"imprint_family": imprint_family,
 		"mage_element": mage_element,
+		"affinity_kind": affinity_kind,
 	}
 
 
@@ -226,6 +228,10 @@ func _apply_skill_state(snap: Dictionary) -> void:
 		mage_element = str(snap["mage_element"])
 		if mage_element == "":
 			mage_element = "fire"
+	if snap.has("affinity_kind"):
+		affinity_kind = str(snap["affinity_kind"])
+		if affinity_kind == "":
+			affinity_kind = "animal"
 
 
 func begin_skill_sandbox() -> void:
@@ -322,6 +328,8 @@ func set_imprint_family_sandbox(family: String) -> void:
 	imprint_family = fam
 	if not SkillCatalog.is_mage_imprint(fam):
 		mage_element = "fire"
+	if not SkillCatalog.is_affinity_imprint(fam):
+		affinity_kind = "animal"
 	var tree := tree_family()
 	for slot in SkillCatalog.HOTKEY_SLOTS:
 		var sid := str(skill_loadout.get(slot, ""))
@@ -348,6 +356,20 @@ func set_mage_element_sandbox(element: String) -> void:
 		if sid != "" and SkillCatalog.family_of(sid) != tree:
 			skill_loadout[slot] = ""
 	_ensure_innate_skills(false)
+	changed.emit()
+
+
+func set_affinity_kind_sandbox(kind: String) -> void:
+	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
+	if not _skill_sandbox_active:
+		return
+	if not SkillCatalog.is_affinity_imprint(imprint_family):
+		return
+	if kind not in SkillCatalog.AFFINITY_KINDS:
+		return
+	if affinity_kind == kind:
+		return
+	affinity_kind = kind
 	changed.emit()
 
 
@@ -504,6 +526,8 @@ func _ensure_innate_skills(persist: bool = true) -> void:
 	imprint_family = SkillCatalog.normalize_imprint(imprint_family)
 	if mage_element not in SkillCatalog.MAGE_ELEMENTS:
 		mage_element = "fire"
+	if affinity_kind not in SkillCatalog.AFFINITY_KINDS:
+		affinity_kind = "animal"
 	var innates: Array = SkillCatalog.innate_ids_for_tree(tree_family())
 	for sid in innates:
 		if skill_rank(str(sid)) < 1:
@@ -1032,6 +1056,7 @@ func to_dict() -> Dictionary:
 		"awakening_branch": awakening_branch,
 		"imprint_family": imprint_family,
 		"mage_element": mage_element,
+		"affinity_kind": affinity_kind,
 		"attr_allocated": attr_allocated.duplicate(),
 		"unspent_points": unspent_points,
 		"quest_kill_progress": quest_kill_progress,
@@ -1079,6 +1104,9 @@ func from_dict(data: Dictionary) -> void:
 	mage_element = str(data.get("mage_element", "fire"))
 	if mage_element not in SkillCatalog.MAGE_ELEMENTS:
 		mage_element = "fire"
+	affinity_kind = str(data.get("affinity_kind", "animal"))
+	if affinity_kind not in SkillCatalog.AFFINITY_KINDS:
+		affinity_kind = "animal"
 	attr_allocated = data.get("attr_allocated", {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0})
 	if typeof(attr_allocated) != TYPE_DICTIONARY:
 		attr_allocated = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
@@ -1192,6 +1220,7 @@ func reset_progress(with_starter: bool = true) -> void:
 	gold = 0
 	imprint_family = "cold_blade"
 	mage_element = "fire"
+	affinity_kind = "animal"
 	attr_allocated = {"str": 0, "vit": 0, "agi": 0, "int": 0, "spi": 0, "luk": 0}
 	unspent_points = 0
 	quest_kill_progress = 0
@@ -1227,10 +1256,10 @@ func reset_progress(with_starter: bool = true) -> void:
 
 
 func new_game(slot: int) -> bool:
-	return new_game_with_imprint(slot, "cold_blade", "fire")
+	return new_game_with_imprint(slot, "cold_blade", "fire", "animal")
 
 
-func new_game_with_imprint(slot: int, imprint: String, element: String = "fire") -> bool:
+func new_game_with_imprint(slot: int, imprint: String, element: String = "fire", kind: String = "animal") -> bool:
 	if not is_valid_slot(slot):
 		return false
 	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
@@ -1242,6 +1271,8 @@ func new_game_with_imprint(slot: int, imprint: String, element: String = "fire")
 		imprint_family = SkillCatalog.FAMILY_COLD
 	if SkillCatalog.is_mage_imprint(imprint_family):
 		mage_element = element if element in SkillCatalog.MAGE_ELEMENTS else "fire"
+	if SkillCatalog.is_affinity_imprint(imprint_family):
+		affinity_kind = kind if kind in SkillCatalog.AFFINITY_KINDS else "animal"
 	_ensure_innate_skills(false)
 	save_game()
 	_save_index()
