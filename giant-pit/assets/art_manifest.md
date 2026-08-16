@@ -338,6 +338,14 @@
 | `skill_slot_ultimate` | 绝技（灰） | `res://assets/ui/icons/skills/skill_slot_ultimate.png` |
 | `skill_slot_passive` | 被动（灰） | `res://assets/ui/icons/skills/skill_slot_passive.png` |
 
+## UI — 战痕技能图标（64×64）
+
+| ID | 范围 | 路径 |
+|----|------|------|
+| `ws_active_*` | 踏锋斩～天崩地裂（12 主动） | `res://assets/ui/icons/skills/ws_{dashslash,groundwave,ironstance,riposte,whirlwind,mountainbreak,warcry,chainassault,shieldbreak,desperaterush,bloodrage,cataclysm}.png` |
+| `ws_passive_*` | 血战本能～不朽战痕（13 被动） | `res://assets/ui/icons/skills/ws_{bloodinstinct,heavyarm,toughbone,battlelust,bloodthirst,immovable,ironskin,scarheal,breaksight,lethalfocus,laststand,veteran,immortalscar}.png` |
+| `gen_war_scar_skill_icons` | Pillow 生成脚本 | `res://tools/gen_war_scar_skill_icons.py` |
+
 ---
 
 ## Deprecated（v0.2 通用坑砖/旧怪/旧符文，文件保留兼容）

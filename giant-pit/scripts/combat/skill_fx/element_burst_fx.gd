@@ -74,8 +74,8 @@ func _draw_ice(u: float, a: float, r: float) -> void:
 	draw_arc(Vector2.ZERO, r * u, 0.0, TAU, 32, Color(0.7, 0.92, 1.0, a * 0.6), 2.0, true)
 	for i in 6:
 		var ang := TAU * float(i) / 6.0 + u * 0.5
-		var len := r * (0.3 + 0.7 * u)
-		var tip := Vector2.from_angle(ang) * len
+		var ray_length := r * (0.3 + 0.7 * u)
+		var tip := Vector2.from_angle(ang) * ray_length
 		var side := Vector2.from_angle(ang + PI * 0.5) * 4.0
 		draw_colored_polygon(PackedVector2Array([
 			tip, tip * 0.3 + side, tip * 0.3 - side,

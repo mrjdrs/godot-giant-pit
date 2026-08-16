@@ -53,6 +53,10 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var dmg: float = _hit_float(hitbox, "damage")
 	var knock: float = _hit_float(hitbox, "knockback_force")
 	var src = hitbox.get("source")
+	var hit_mod := {"damage_mult": 1.0, "poise_mult": 1.0}
+	if src != null and src.has_method("combat_hit_modifiers"):
+		hit_mod = src.combat_hit_modifiers(self, hitbox)
+	dmg *= float(hit_mod.get("damage_mult", 1.0))
 
 	dmg *= statuses.damage_taken_mult()
 	var eff_armor := maxf(armor - statuses.pdef_cut(), 0.0)
@@ -71,6 +75,8 @@ func _on_hurt(hitbox: Area2D) -> void:
 	knockback_velocity = dir * knock
 
 	_apply_hit_statuses(hitbox, src)
+	if src != null and src.has_method("on_combat_hit"):
+		src.on_combat_hit(self, hitbox, dmg)
 
 	print(Loc.t("dummy.hit", [dmg, hp]))
 

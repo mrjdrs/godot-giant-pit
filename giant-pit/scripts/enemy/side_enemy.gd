@@ -4,6 +4,7 @@ extends CharacterBody2D
 const ST = preload("res://scripts/pit/segment_types.gd")
 const AttackPatterns = preload("res://scripts/enemy/enemy_attack_patterns.gd")
 const EnemyCatalog = preload("res://scripts/enemy/enemy_catalog.gd")
+const StatusEffects = preload("res://scripts/combat/status_effects.gd")
 
 signal died_with_id(enemy_id: String, meta: Dictionary)
 signal stats_changed(hp: float, max_hp: float, poise: float, max_poise: float)
@@ -58,6 +59,8 @@ var _hp_bg: Polygon2D
 var _hp_fill: Polygon2D
 var _poise_fill: Polygon2D
 var _contact_window: float = 0.0
+var statuses = StatusEffects.new()
+var _last_damage_source = null
 
 
 func _ready() -> void:
@@ -157,6 +160,16 @@ func _emit_stats() -> void:
 func _physics_process(delta: float) -> void:
 	if _dead:
 		return
+	var status_tick: Dictionary = statuses.tick(delta)
+	if status_tick.get("dot_source") != null:
+		_last_damage_source = status_tick.get("dot_source")
+	if float(status_tick.get("dot_damage", 0.0)) > 0.0:
+		hp = maxf(hp - float(status_tick["dot_damage"]), 0.0)
+		_refresh_bars()
+		_emit_stats()
+		if hp <= 0.0:
+			_die()
+			return
 	_tick_flash(delta)
 	if _hitstun > 0.0:
 		_hitstun -= delta
@@ -240,7 +253,7 @@ func _do_patrol(delta: float) -> void:
 		velocity.y += GRAVITY * delta
 	if absf(global_position.x - _patrol_origin.x) > 80.0:
 		_dir = -signf(global_position.x - _patrol_origin.x)
-	velocity.x = _dir * move_speed * 0.6
+	velocity.x = _dir * move_speed * 0.6 * statuses.move_mult()
 
 
 func _chase_player(player: Node, delta: float) -> void:
@@ -264,7 +277,7 @@ func _chase_player(player: Node, delta: float) -> void:
 			velocity.x = _dir * move_speed * 1.05
 			velocity.y = clampf((target_y - global_position.y) * 2.0, -120.0, 120.0)
 		ST.ARCHETYPE_BOSS, ST.ARCHETYPE_ELITE, ST.ARCHETYPE_MELEE:
-			velocity.x = _dir * move_speed * (1.15 if is_elite else 1.25)
+			velocity.x = _dir * move_speed * (1.15 if is_elite else 1.25) * statuses.move_mult()
 			if not is_on_floor():
 				velocity.y += GRAVITY * delta
 		_:
@@ -381,7 +394,7 @@ func _try_hit(player: Node) -> void:
 		return
 	_cd = attack_cooldown * 0.5
 	if player.has_method("take_damage"):
-		player.take_damage(contact_damage, global_position)
+		player.take_damage(contact_damage * statuses.outgoing_mult(), global_position)
 
 
 func _on_hurt(hitbox: Area2D) -> void:
@@ -391,8 +404,14 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var knock: float = float(hitbox.get("knockback_force"))
 	var poise_dmg: float = float(hitbox.get("poise_damage")) if hitbox.get("poise_damage") != null else knock * 0.08
 	var src = hitbox.get("source")
+	_last_damage_source = src
+	var hit_mod := {"damage_mult": 1.0, "poise_mult": 1.0}
+	if src != null and src.has_method("combat_hit_modifiers"):
+		hit_mod = src.combat_hit_modifiers(self, hitbox)
+	raw_dmg *= float(hit_mod.get("damage_mult", 1.0))
+	poise_dmg *= float(hit_mod.get("poise_mult", 1.0))
 	var dmg_mult := BREAK_DMG_MULT if _poise_broken else 1.0
-	var dmg := raw_dmg * dmg_mult
+	var dmg := raw_dmg * dmg_mult * statuses.damage_taken_mult()
 	if armor > 0.0 and dmg > 0.0:
 		dmg = maxf(dmg - armor, dmg * 0.35)
 	hp = maxf(hp - dmg, 0.0)
@@ -420,6 +439,12 @@ func _on_hurt(hitbox: Area2D) -> void:
 	_state_timer = 0.1
 	_refresh_bars()
 	_emit_stats()
+	if hitbox.has_meta("status_kind"):
+		statuses.apply(str(hitbox.get_meta("status_kind")), hitbox.get_meta("status_payload", {}))
+	elif src != null and src.has_method("on_hit_apply_status"):
+		src.on_hit_apply_status(self, hitbox)
+	if src != null and src.has_method("on_combat_hit"):
+		src.on_combat_hit(self, hitbox, dmg)
 	if hp <= 0.0:
 		_die()
 
@@ -443,6 +468,8 @@ func _die() -> void:
 	if is_boss:
 		RunSession.grant_special_mind()
 	var meta := {"warp": warp_unlock_id, "is_boss": is_boss}
+	if _last_damage_source != null and is_instance_valid(_last_damage_source) and _last_damage_source.has_method("on_enemy_killed"):
+		_last_damage_source.on_enemy_killed(self)
 	died_with_id.emit(enemy_id, meta)
 	if warp_unlock_id != "":
 		var floor_n := get_tree().get_first_node_in_group("side_pit_floor")
@@ -450,6 +477,10 @@ func _die() -> void:
 			floor_n.on_warp_guard_killed(warp_unlock_id)
 	_drop_loot()
 	queue_free()
+
+
+func apply_status(kind: String, payload: Dictionary = {}) -> void:
+	statuses.apply(kind, payload)
 
 
 func _drop_loot() -> void:

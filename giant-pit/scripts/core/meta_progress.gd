@@ -56,6 +56,7 @@ const MIND_VALUE_PER_INT := 4
 const MIND_VALUE_PER_LEVEL := 2
 const TRAINING_MIND_MAX := 999
 const POINTS_PER_LEVEL := 3
+const EXPLORER_LEVEL_MAX := 60
 const ATTR_KEYS := ["str", "vit", "agi", "int", "spi", "luk"]
 const PAPER_FACE_VALUE := 100 ## 换出时标价（金币→券）
 const VOUCHER_SPEND_VALUE := 99 ## 购买/兑回时 1 张金币券折合金币
@@ -137,7 +138,7 @@ func grant_xp(amount: int) -> int:
 		return 0
 	explorer_xp += amount
 	var gained := 0
-	while explorer_level < 30 and explorer_xp >= xp_to_next_level():
+	while explorer_level < EXPLORER_LEVEL_MAX and explorer_xp >= xp_to_next_level():
 		explorer_xp -= xp_to_next_level()
 		explorer_level += 1
 		unspent_points += POINTS_PER_LEVEL
@@ -472,7 +473,6 @@ func try_forget(skill_id: String) -> String:
 
 
 func learned_stat_dict() -> Dictionary:
-	const CrystalCatalog = preload("res://scripts/items/crystal_catalog.gd")
 	const SkillCatalog = preload("res://scripts/skills/skill_catalog.gd")
 	var out: Dictionary = {}
 	for cid in learned_skills.keys():
@@ -494,29 +494,28 @@ func learned_stat_dict() -> Dictionary:
 				"rune_a_cruel":
 					out["core_a_cruel"] = true
 				"rune_s_chain":
-					out["sk_chain"] = true
+					out["ws_passive_bloodinstinct"] = true
 				"rune_s_quake":
-					out["sk_quake"] = true
+					out["ws_active_groundwave"] = true
 				"rune_s_cloudstep":
-					out["sk_dash"] = true
+					out["ws_active_dashslash"] = true
 				"rune_s_ironwall":
-					out["sk_ironwall"] = true
+					out["ws_passive_heavyarm"] = true
 	return out
 
 
 func grant_arena_skills() -> void:
 	## 战斗场临时解锁，不写盘
 	_ensure_innate_skills(false)
-	if skill_rank("sk_quake") < 1:
-		learned_skills["sk_quake"] = 1
-	if skill_rank("sk_bolt") < 1:
-		learned_skills["sk_bolt"] = 1
+	for sid in ["ws_active_dashslash", "ws_active_groundwave", "ws_active_whirlwind"]:
+		if skill_rank(sid) < 1:
+			learned_skills[sid] = 1
 	if str(skill_loadout.get("rmb", "")) == "":
-		skill_loadout["rmb"] = "sk_dash"
+		skill_loadout["rmb"] = "ws_active_dashslash"
 	if str(skill_loadout.get("q", "")) == "":
-		skill_loadout["q"] = "sk_bolt"
+		skill_loadout["q"] = "ws_active_groundwave"
 	if str(skill_loadout.get("e", "")) == "":
-		skill_loadout["e"] = "sk_quake"
+		skill_loadout["e"] = "ws_active_whirlwind"
 	changed.emit()
 
 
@@ -1082,7 +1081,7 @@ func from_dict(data: Dictionary) -> void:
 		if not skill_loadout.has(k):
 			skill_loadout[k] = ""
 	explorer_xp = int(data.get("explorer_xp", 0))
-	explorer_level = maxi(1, int(data.get("explorer_level", 1)))
+	explorer_level = clampi(int(data.get("explorer_level", 1)), 1, EXPLORER_LEVEL_MAX)
 	active_quest_id = str(data.get("active_quest_id", ""))
 	intel = PackedStringArray(data.get("intel", []))
 	unlocked_warps = data.get("unlocked_warps", [])

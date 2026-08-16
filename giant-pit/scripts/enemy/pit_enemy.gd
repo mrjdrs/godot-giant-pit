@@ -37,6 +37,7 @@ var flash_timer: float = 0.0
 var knockback_velocity: Vector2 = Vector2.ZERO
 var attack_cd: float = 0.0
 var statuses = StatusEffects.new()
+var _last_damage_source = null
 var _player: Node2D = null
 var _hp_bg: Polygon2D = null
 var _hp_fill: Polygon2D = null
@@ -162,6 +163,8 @@ func _physics_process(delta: float) -> void:
 	if flash_timer <= 0.0:
 		sprite.modulate = statuses.visual_tint()
 	if float(st.get("dot_damage", 0.0)) > 0.0:
+		if st.get("dot_source") != null:
+			_last_damage_source = st.get("dot_source")
 		hp = maxf(hp - float(st["dot_damage"]), 0.0)
 		_update_hp_label()
 		if hp <= 0.0:
@@ -238,6 +241,11 @@ func _on_hurt(hitbox: Area2D) -> void:
 	var dmg: float = _hit_float(hitbox, "damage")
 	var knock: float = _hit_float(hitbox, "knockback_force")
 	var src = hitbox.get("source")
+	_last_damage_source = src
+	var hit_mod := {"damage_mult": 1.0, "poise_mult": 1.0}
+	if src != null and src.has_method("combat_hit_modifiers"):
+		hit_mod = src.combat_hit_modifiers(self, hitbox)
+	dmg *= float(hit_mod.get("damage_mult", 1.0))
 	if _poise_broken:
 		dmg *= BREAK_DMG_MULT
 	dmg *= statuses.damage_taken_mult()
@@ -248,6 +256,7 @@ func _on_hurt(hitbox: Area2D) -> void:
 		var pdmg: float = _hit_float(hitbox, "poise_damage")
 		if pdmg <= 0.0:
 			pdmg = knock * 0.08
+		pdmg *= float(hit_mod.get("poise_mult", 1.0))
 		poise = maxf(poise - pdmg, 0.0)
 		if poise <= 0.0:
 			_poise_broken = true
@@ -263,6 +272,8 @@ func _on_hurt(hitbox: Area2D) -> void:
 	knockback_velocity = dir * knock
 
 	_apply_hit_statuses(hitbox, src)
+	if src != null and src.has_method("on_combat_hit"):
+		src.on_combat_hit(self, hitbox, dmg)
 
 	if hp <= 0.0:
 		_die()
@@ -330,6 +341,8 @@ func _finish_die() -> void:
 	if is_boss:
 		RunSession.grant_special_mind()
 	var meta := {"warp": warp_unlock_id, "is_boss": is_boss, "is_elite": is_elite, "is_special": is_special}
+	if _last_damage_source != null and is_instance_valid(_last_damage_source) and _last_damage_source.has_method("on_enemy_killed"):
+		_last_damage_source.on_enemy_killed(self)
 	died_with_id.emit(enemy_id, meta)
 	GameBus.pub("enemy_died", {"id": enemy_id, "rank": _rank_name(), "pos": global_position, "meta": meta})
 	if warp_unlock_id != "":

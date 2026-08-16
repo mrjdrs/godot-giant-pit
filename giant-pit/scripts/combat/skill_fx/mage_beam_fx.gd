@@ -32,10 +32,10 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	var u := clampf(_t / maxf(_dur, 0.001), 0.0, 1.0)
 	var a := _col.a * (1.0 - u * 0.9)
-	var len := _length * (0.4 + 0.6 * minf(u * 2.0, 1.0))
+	var beam_length := _length * (0.4 + 0.6 * minf(u * 2.0, 1.0))
 	var w := _width * (1.0 - u * 0.4)
 	draw_colored_polygon(PackedVector2Array([
-		Vector2(0, -w * 0.5), Vector2(len, -w * 0.25), Vector2(len, w * 0.25), Vector2(0, w * 0.5),
+		Vector2(0, -w * 0.5), Vector2(beam_length, -w * 0.25), Vector2(beam_length, w * 0.25), Vector2(0, w * 0.5),
 	]), Color(_col.r, _col.g, _col.b, a * 0.55))
-	draw_line(Vector2(0, 0), Vector2(len, 0), Color(_col.r, _col.g * 0.9, _col.b * 0.8, a), w * 0.35)
-	draw_circle(Vector2(len * 0.85, 0), w * 0.3, Color(1.0, 1.0, 1.0, a * 0.7))
+	draw_line(Vector2(0, 0), Vector2(beam_length, 0), Color(_col.r, _col.g * 0.9, _col.b * 0.8, a), w * 0.35)
+	draw_circle(Vector2(beam_length * 0.85, 0), w * 0.3, Color(1.0, 1.0, 1.0, a * 0.7))

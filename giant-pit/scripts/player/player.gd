@@ -121,7 +121,6 @@ var blade_swing_deg: float = 0.0
 var _attack_phase: AttackPhase = AttackPhase.NONE
 var _attack_timer: float = 0.0
 var _attack_spd: float = 1.0
-var _attack_kb: float = 260.0 ## 技能默认击退，普攻读 combo 表
 var _attack_reach: float = 1.0
 var _combo_def: Dictionary = {}
 var _light_buffered: bool = false
@@ -152,8 +151,6 @@ var _dash_hit_active: bool = false
 var _dash_timer: float = 0.0
 var _dash_dir: Vector2 = Vector2.RIGHT
 var _dash_speed: float = DASH_SPEED
-var _mage_light_shots_pending: int = 0
-var _mage_light_shot_dir: Vector2 = Vector2.RIGHT
 var _mage_dome_t: float = 0.0
 
 var max_hp: float = BASE_MAX_HP
@@ -177,6 +174,21 @@ var _locked_skill_slot: String = ""
 var _out_combat_t: float = 0.0
 var _mind_regen_acc: float = 0.0
 var statuses = StatusEffects.new()
+var _ws_ironstance_t: float = 0.0
+var _ws_warcry_t: float = 0.0
+var _ws_bloodrage_t: float = 0.0
+var _ws_parry_t: float = 0.0
+var _ws_laststand_t: float = 0.0
+var _ws_laststand_cd: float = 0.0
+var _ws_ultimate_dr_t: float = 0.0
+var _ws_ultimate_used: bool = false
+var _ws_still_t: float = 0.0
+var _ws_still_stacks: int = 0
+var _ws_scarheal_t: float = 0.0
+var _ws_mountain_empower_t: float = 0.0
+var _ws_pose_t: float = 0.0
+var _ws_pose_kind: String = ""
+var _ws_cataclysm_windup_t: float = 0.0
 
 ## 俯视扩展（兼容旧场景赋值）
 var side_view: bool = false
@@ -192,9 +204,6 @@ var _tex_idle: Texture2D
 var _tex_run: Texture2D
 var _tex_explorer: Texture2D
 var _tex_4dir: Texture2D
-var _view_dirs_4: Array[Vector2] = [
-	Vector2(0, 1), Vector2(1, 0), Vector2(0, -1), Vector2(-1, 0),
-]
 
 
 func _ready() -> void:
@@ -308,6 +317,7 @@ func _physics_process(delta: float) -> void:
 
 	_tick_skill_cds(delta)
 	_tick_player_statuses(delta)
+	_tick_ws_effects(delta)
 	_tick_attack(delta)
 	_tick_mind_regen(delta)
 	_tick_hp_regen(delta)
@@ -369,8 +379,7 @@ func _tick_hp_regen(delta: float) -> void:
 		return
 	var heal := _hp_regen_acc
 	_hp_regen_acc = 0.0
-	hp = minf(hp + heal, max_hp)
-	hp_changed.emit(hp, max_hp)
+	_ws_heal(heal)
 
 
 func _tick_companion(delta: float) -> void:
@@ -411,6 +420,8 @@ func _process(_delta: float) -> void:
 func _handle_combat_input() -> void:
 	if not combat_enabled:
 		return
+	if _ws_pose_t > 0.0:
+		return
 	if state == State.DASH:
 		return
 	if state == State.ATTACK_LIGHT:
@@ -436,8 +447,13 @@ func _process_free_move(_delta: float) -> void:
 	if input_locked:
 		velocity = Vector2.ZERO
 		return
+	if _ws_ironstance_t > 0.0 or _ws_cataclysm_windup_t > 0.0:
+		velocity = Vector2.ZERO
+		state = State.IDLE
+		return
 	var input_dir := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	velocity = input_dir * _move_speed()
+	var ws_move_factor := 0.5 if _ws_pose_t > 0.0 and _ws_pose_kind == "spin" else 1.0
+	velocity = input_dir * _move_speed() * ws_move_factor
 	if input_dir.length_squared() > 0.01:
 		facing = input_dir.normalized()
 		state = State.MOVE
@@ -498,7 +514,9 @@ func _move_speed() -> float:
 
 func _light_damage_mult() -> float:
 	var m := 1.0 * _damage_mult()
-	for pid in ["sk_chain", "hw_caliber", "mgf_ember", "mgi_frostmark", "mga_stain", "mgd_shadowbite", "mgl_grace", "nat_grove"]:
+	if _ws_mountain_empower_t > 0.0:
+		m *= 1.30
+	for pid in ["hw_caliber", "mgf_ember", "mgi_frostmark", "mga_stain", "mgd_shadowbite", "mgl_grace", "nat_grove"]:
 		var r := MetaProgress.skill_rank(pid)
 		if r <= 0:
 			continue
@@ -672,6 +690,17 @@ func _status_payload_from_combat(combat: Dictionary) -> Dictionary:
 					"duration": float(combat.get("burn_time", 2.5)),
 				},
 			}
+		"bleed":
+			return {
+				"kind": StatusEffects.KIND_BLEED,
+				"data": {
+					"dps": float(combat.get("bleed_dps", 4.0)),
+					"duration": float(combat.get("bleed_time", 3.0)),
+					"stacks": int(combat.get("bleed_stacks", 1)),
+					"max_stacks": int(combat.get("bleed_max_stacks", 1)),
+					"source": self,
+				},
+			}
 		"chill":
 			return {
 				"kind": StatusEffects.KIND_CHILL,
@@ -719,8 +748,7 @@ func _apply_self_bless(combat: Dictionary) -> void:
 		return
 	var heal := float(combat.get("bless_heal", 0.0))
 	if heal > 0.0:
-		hp = minf(hp + heal, max_hp)
-		hp_changed.emit(hp, max_hp)
+		_ws_heal(heal)
 	statuses.apply(StatusEffects.KIND_BLESS, {
 		"shield": float(combat.get("bless_shield", 0.0)),
 		"hps": float(combat.get("bless_hps", 0.0)),
@@ -731,15 +759,61 @@ func _apply_self_bless(combat: Dictionary) -> void:
 func _tick_player_statuses(delta: float) -> void:
 	var st: Dictionary = statuses.tick(delta)
 	if float(st.get("heal", 0.0)) > 0.0:
-		hp = minf(hp + float(st["heal"]), max_hp)
-		hp_changed.emit(hp, max_hp)
+		_ws_heal(float(st["heal"]))
+
+
+func _tick_ws_effects(delta: float) -> void:
+	_ws_ironstance_t = maxf(_ws_ironstance_t - delta, 0.0)
+	_ws_warcry_t = maxf(_ws_warcry_t - delta, 0.0)
+	_ws_bloodrage_t = maxf(_ws_bloodrage_t - delta, 0.0)
+	_ws_parry_t = maxf(_ws_parry_t - delta, 0.0)
+	_ws_laststand_t = maxf(_ws_laststand_t - delta, 0.0)
+	_ws_laststand_cd = maxf(_ws_laststand_cd - delta, 0.0)
+	_ws_ultimate_dr_t = maxf(_ws_ultimate_dr_t - delta, 0.0)
+	_ws_mountain_empower_t = maxf(_ws_mountain_empower_t - delta, 0.0)
+	_ws_cataclysm_windup_t = maxf(_ws_cataclysm_windup_t - delta, 0.0)
+	_ws_pose_t = maxf(_ws_pose_t - delta, 0.0)
+	if _ws_pose_t <= 0.0:
+		_ws_pose_kind = ""
+	var immovable_r := MetaProgress.skill_rank("ws_passive_immovable")
+	var moving := Input.get_vector("move_left", "move_right", "move_up", "move_down").length_squared() > 0.01 or state == State.DASH
+	if immovable_r > 0 and not moving:
+		var immovable := SkillCatalog.passive("ws_passive_immovable")
+		_ws_still_t += delta
+		var every := float(immovable.get("still_seconds_per_stack", 2.0))
+		_ws_still_stacks = mini(int(floor(_ws_still_t / every)), int(immovable.get("max_stacks", 2)))
+	else:
+		_ws_still_t = 0.0
+		_ws_still_stacks = 0
+	var scar_r := MetaProgress.skill_rank("ws_passive_scarheal")
+	if scar_r > 0 and hp < max_hp * 0.5 and _out_combat_t < MIND_REGEN_DELAY:
+		var scar := SkillCatalog.passive("ws_passive_scarheal")
+		var interval := maxf(float(scar.get("interval", 3.0)) - float(scar.get("interval_cut_per_rank", 0.3)) * float(scar_r - 1), float(scar.get("min_interval", 2.0)))
+		_ws_scarheal_t += delta
+		if _ws_scarheal_t >= interval:
+			_ws_scarheal_t = 0.0
+			_ws_heal(max_hp * (float(scar.get("heal_max_hp", 0.015)) + float(scar.get("heal_per_rank", 0.003)) * float(scar_r - 1)))
+	else:
+		_ws_scarheal_t = 0.0
+
+
+func _ws_heal(amount: float) -> void:
+	if amount <= 0.0:
+		return
+	var immortal_r := MetaProgress.skill_rank("ws_passive_immortalscar")
+	if immortal_r > 0:
+		var p := SkillCatalog.passive("ws_passive_immortalscar")
+		amount *= 1.0 + float(p.get("healing_bonus", 0.20)) + float(p.get("healing_per_rank", 0.05)) * float(immortal_r - 1)
+	hp = minf(hp + amount, max_hp)
+	hp_changed.emit(hp, max_hp)
 
 
 func _skill_atk_spd() -> float:
 	var bonus := 0.0
-	var stance_r := MetaProgress.skill_rank("sk_stance")
-	if stance_r > 0:
-		bonus += float(SkillCatalog.passive("sk_stance").get("atk_spd", 0.03)) * float(stance_r)
+	if held_weapon == SkillCatalog.HELD_BLADE and _ws_warcry_t > 0.0:
+		bonus += 0.10
+	if held_weapon == SkillCatalog.HELD_BLADE and _ws_bloodrage_t > 0.0:
+		bonus += 0.12
 	var reload_r := MetaProgress.skill_rank("hw_reload")
 	if reload_r > 0:
 		bonus += float(SkillCatalog.passive("hw_reload").get("atk_spd", 0.03)) * float(reload_r)
@@ -756,10 +830,38 @@ func _skill_cd_factor() -> float:
 
 func _passive_dr() -> float:
 	var dr := float(stats.imprint_dr)
-	for pid in ["sk_ironwall", "hw_brace", "mgf_ward"]:
+	for pid in ["hw_brace", "mgf_ward"]:
 		var r := MetaProgress.skill_rank(pid)
 		if r > 0:
 			dr += float(SkillCatalog.passive(pid).get("dr", 0.04)) * float(r)
+	var heavy_r := MetaProgress.skill_rank("ws_passive_heavyarm")
+	if heavy_r > 0:
+		var heavy := SkillCatalog.passive("ws_passive_heavyarm")
+		dr += float(heavy.get("dr", 0.04)) + float(heavy.get("dr_per_rank", 0.01)) * float(heavy_r - 1)
+	var iron_r := MetaProgress.skill_rank("ws_passive_ironskin")
+	if iron_r > 0:
+		var iron := SkillCatalog.passive("ws_passive_ironskin")
+		var threshold := minf(float(iron.get("hp_threshold", 0.30)) + float(iron.get("threshold_per_rank", 0.02)) * float(iron_r - 1), float(iron.get("max_threshold", 0.40)))
+		if hp / maxf(max_hp, 1.0) <= threshold:
+			dr += float(iron.get("dr", 0.15)) + float(iron.get("dr_per_rank", 0.03)) * float(iron_r - 1)
+	var immovable_r := MetaProgress.skill_rank("ws_passive_immovable")
+	if immovable_r > 0 and _ws_still_stacks > 0:
+		var immovable := SkillCatalog.passive("ws_passive_immovable")
+		dr += float(_ws_still_stacks) * (float(immovable.get("dr_per_stack", 0.08)) + float(immovable.get("dr_per_rank", 0.02)) * float(immovable_r - 1))
+	if _ws_ironstance_t > 0.0:
+		dr += 0.40
+	if _ws_cataclysm_windup_t > 0.0:
+		dr += 0.20
+	if _ws_warcry_t > 0.0:
+		dr += 0.20
+	if _ws_laststand_t > 0.0:
+		var last_r := MetaProgress.skill_rank("ws_passive_laststand")
+		var last := SkillCatalog.passive("ws_passive_laststand")
+		dr += float(last.get("guard_dr", 0.50)) + float(last.get("guard_dr_per_rank", 0.05)) * float(maxi(last_r - 1, 0))
+	if _ws_ultimate_dr_t > 0.0:
+		var immortal_r := MetaProgress.skill_rank("ws_passive_immortalscar")
+		var immortal := SkillCatalog.passive("ws_passive_immortalscar")
+		dr += float(immortal.get("first_ultimate_dr", 0.10)) + float(immortal.get("ultimate_dr_per_rank", 0.02)) * float(maxi(immortal_r - 1, 0))
 	return clampf(dr, 0.0, 0.6)
 
 
@@ -793,6 +895,21 @@ func _damage_mult() -> float:
 	var m := 1.0
 	if awakening_branch == "whirl":
 		m *= 1.05
+	var battle_r := MetaProgress.skill_rank("ws_passive_battlelust")
+	if battle_r > 0 and max_hp > 0.0:
+		var p := SkillCatalog.passive("ws_passive_battlelust")
+		var steps := mini(int(floor((1.0 - hp / max_hp) / float(p.get("lost_hp_step", 0.10)))), 5)
+		var per_step := float(p.get("patk_per_step", 0.02)) + float(p.get("patk_per_step_per_rank", 0.005)) * float(battle_r - 1)
+		var cap := float(p.get("max_patk_bonus", 0.10)) + float(p.get("max_bonus_per_rank", 0.02)) * float(battle_r - 1)
+		m *= 1.0 + minf(float(steps) * per_step, cap)
+	if _ws_warcry_t > 0.0:
+		m *= 1.15
+	if _ws_bloodrage_t > 0.0:
+		m *= 1.30
+	var immovable_r := MetaProgress.skill_rank("ws_passive_immovable")
+	if immovable_r > 0 and _ws_still_stacks > 0:
+		var immovable := SkillCatalog.passive("ws_passive_immovable")
+		m *= 1.0 + float(_ws_still_stacks) * (float(immovable.get("patk_per_stack", 0.05)) + float(immovable.get("patk_per_rank", 0.01)) * float(immovable_r - 1))
 	return m
 
 
@@ -872,7 +989,7 @@ func _update_visuals() -> void:
 	blade_pivot.rotation = facing.angle()
 	if _tex_4dir == null:
 		sprite.flip_h = facing.x < 0.0
-	if state != State.ATTACK_LIGHT and state != State.ATTACK_SKILL:
+	if state != State.ATTACK_LIGHT and state != State.ATTACK_SKILL and _ws_pose_t <= 0.0:
 		if absf(blade_swing_deg) > 0.6:
 			blade_swing_deg = lerpf(blade_swing_deg, 0.0, 0.28)
 		else:
@@ -991,8 +1108,6 @@ func _start_light_attack(_lock_facing: Vector2 = Vector2.ZERO) -> void:
 	_attack_spd = _skill_atk_spd()
 	_attack_reach = float(_brand_stats().get("reach", 1.0))
 	var windup: float = float(_combo_def["windup"]) / _attack_spd
-	if combo_step == 2 and MetaProgress.skill_rank("sk_chain") > 0:
-		windup *= float(SkillCatalog.passive("sk_chain").get("combo2_windup", 0.9))
 	var hit_size: Vector2 = _combo_def["hit_size"] * _attack_reach
 	var hit_off: Vector2 = _combo_def["hit_offset"] * _attack_reach
 	_set_hitbox_size(hit_size, hit_off)
@@ -1150,6 +1265,15 @@ func _cast_skill(slot: String, core_id: String) -> void:
 	_skill_hide_blade = bool(_skill_combat.get("hide_blade", false))
 	_skill_jump = float(_skill_combat.get("jump", 0.0))
 	_attack_reach = float(_brand_stats().get("reach", 1.0))
+	if str(_skill_combat.get("style", "")).begins_with("ws_"):
+		_cast_ws_skill(str(_skill_combat.get("style", "")), rank)
+		var ws_cd := SkillCatalog.cooldown(core_id, rank)
+		_skill_cd[slot] = ws_cd * skill_cd_mult * _skill_cd_factor()
+		if SkillCatalog.is_loud(core_id, rank):
+			loud_skill_used.emit(core_id)
+		_pending_skill = ""
+		_pending_skill_slot = ""
+		return
 	if (str(_skill_combat.get("style", "")) in ["dash_slash", "dash_shot", "mage_blink"]
 			or _pending_skill.ends_with("_blink") or _pending_skill.ends_with("step") or _pending_skill.ends_with("flash")):
 		_start_dash_slash()
@@ -1179,6 +1303,325 @@ func _cast_skill(slot: String, core_id: String) -> void:
 	_attack_timer = windup
 	if (SkillCatalog.has_id(core_id) and SkillCatalog.is_loud(core_id, rank)) or CrystalCatalog.is_loud(core_id):
 		loud_skill_used.emit(core_id)
+
+
+func _cast_ws_skill(style: String, _rank: int) -> void:
+	var combat := _skill_combat.duplicate(true)
+	combat["_skill_id"] = _pending_skill
+	var mouse := get_global_mouse_position()
+	var direction := (mouse - global_position).normalized()
+	if direction.length_squared() < 0.01:
+		direction = facing
+	facing = direction
+	attack_locked_facing = direction
+	match style:
+		"ws_dashslash":
+			_start_ws_dash(combat, false)
+		"ws_groundwave":
+			_ws_pose("slam", 0.28)
+			var damage := _ws_patk_damage(float(combat.get("patk_multiplier", 1.5)))
+			_ws_area_damage(global_position, float(combat.get("wave_radius", 100.0)), damage, 18.0, combat, direction, float(combat.get("arc_degrees", 90.0)))
+			_spawn_ground_crack(global_position + direction * 42.0, float(combat.get("wave_radius", 100.0)))
+			if held_weapon == SkillCatalog.HELD_BLADE:
+				_schedule_ws_bleed_zone(global_position + direction * 48.0, 58.0, 3.0, stats.patk * 0.08, 2)
+		"ws_ironstance":
+			_ws_ironstance_t = float(combat.get("duration", 3.0))
+			_ws_pose("stance", _ws_ironstance_t)
+			get_tree().create_timer(_ws_ironstance_t).timeout.connect(func():
+				if not is_instance_valid(self):
+					return
+				var shock_combat := combat.duplicate(true)
+				if held_weapon == SkillCatalog.HELD_BLADE:
+					shock_combat["status"] = "chill"
+					shock_combat["chill_slow"] = 0.20
+					shock_combat["chill_time"] = 1.0
+				_ws_area_damage(global_position, float(combat.get("wave_radius", 60.0)), _ws_patk_damage(float(combat.get("end_patk_multiplier", 0.8))), 16.0, shock_combat)
+				_spawn_shockwave(global_position, float(combat.get("wave_radius", 60.0)))
+			)
+		"ws_riposte":
+			_ws_parry_t = float(combat.get("parry_window", 0.5))
+			_ws_pose("parry", _ws_parry_t)
+		"ws_whirlwind":
+			var ticks := int(combat.get("ticks", 3)) + (1 if held_weapon == SkillCatalog.HELD_BLADE else 0)
+			var duration := float(combat.get("duration", 1.2))
+			_ws_pose("spin", duration)
+			_spawn_whirl_ring(float(combat.get("wave_radius", 70.0)))
+			for i in ticks:
+				var tick_index := i
+				get_tree().create_timer(float(i) * duration / float(ticks)).timeout.connect(func():
+					if is_instance_valid(self):
+						var tick_mult := float(combat.get("patk_multiplier", 0.8))
+						if held_weapon == SkillCatalog.HELD_BLADE and tick_index == ticks - 1:
+							tick_mult *= 0.5
+						_ws_area_damage(global_position, float(combat.get("wave_radius", 70.0)), _ws_patk_damage(tick_mult), 8.0, combat)
+				)
+		"ws_mountainbreak":
+			_ws_pose("slam", 0.42)
+			_ws_area_damage(global_position, 80.0, _ws_patk_damage(float(combat.get("patk_multiplier", 2.8))), 24.0 * float(combat.get("poise_multiplier", 2.0)), combat, direction, 42.0, 1)
+			if held_weapon == SkillCatalog.HELD_BLADE:
+				_ws_mountain_empower_t = 3.0
+		"ws_warcry":
+			_ws_warcry_t = float(combat.get("duration", 5.0))
+			_ws_pose("rage", 0.42)
+			_spawn_shockwave(global_position, float(combat.get("wave_radius", 120.0)))
+			_ws_apply_status_area(global_position, float(combat.get("wave_radius", 120.0)), StatusEffects.KIND_CHILL, {"slow": float(combat.get("enemy_slow", 0.15)), "duration": _ws_warcry_t})
+		"ws_chainassault":
+			var ticks := int(combat.get("ticks", 5))
+			var duration := float(combat.get("duration", 1.5))
+			_ws_pose("spin", duration)
+			for i in ticks:
+				var tick_index := i
+				get_tree().create_timer(float(i) * duration / float(ticks)).timeout.connect(func():
+					if not is_instance_valid(self):
+						return
+					var tick_combat := combat.duplicate(true)
+					var tick_damage := _ws_patk_damage(float(combat.get("patk_multiplier", 0.65)))
+					if held_weapon == SkillCatalog.HELD_BLADE and tick_index == ticks - 1:
+						tick_damage *= 1.5
+						tick_combat["status"] = "bleed"
+						tick_combat["bleed_dps"] = stats.patk * 0.12
+						tick_combat["bleed_time"] = 4.0
+					_ws_area_damage(global_position, 82.0, tick_damage, 10.0, tick_combat, facing, 100.0)
+				)
+		"ws_shieldbreak":
+			_ws_pose("slam", 0.45)
+			_ws_area_damage(global_position, 80.0, _ws_patk_damage(float(combat.get("patk_multiplier", 3.2))), 20.0 * float(combat.get("poise_multiplier", 2.5)), combat, direction, 48.0, 1)
+		"ws_desperaterush":
+			_start_ws_dash(combat, true)
+		"ws_bloodrage":
+			var hp_cost := minf(hp - float(combat.get("min_remaining_hp", 1)), hp * float(combat.get("current_hp_cost", 0.10)))
+			hp = maxf(hp - maxf(hp_cost, 0.0), float(combat.get("min_remaining_hp", 1)))
+			hp_changed.emit(hp, max_hp)
+			_ws_bloodrage_t = float(combat.get("duration", 8.0))
+			_ws_pose("rage", 0.55)
+			_spawn_shockwave(global_position, 72.0)
+		"ws_cataclysm":
+			var target := global_position + direction * minf(global_position.distance_to(mouse), float(SkillCatalog.skill_range(_pending_skill, _rank)))
+			var windup := float(combat.get("windup", 0.8))
+			_ws_cataclysm_windup_t = windup
+			_ws_pose("jump", windup)
+			_spawn_ground_crack(target, float(combat.get("outer_radius", 160.0)))
+			get_tree().create_timer(windup).timeout.connect(func():
+				if not is_instance_valid(self):
+					return
+				_ws_area_damage(target, float(combat.get("outer_radius", 160.0)), _ws_patk_damage(float(combat.get("edge_patk_multiplier", 2.5))), 24.0, combat, Vector2.ZERO, 360.0, 32, float(combat.get("center_radius", 80.0)))
+				var center_hits := _ws_area_damage(target, float(combat.get("center_radius", 80.0)), _ws_patk_damage(float(combat.get("center_patk_multiplier", 5.0))), 40.0, combat)
+				_spawn_shockwave(target, float(combat.get("outer_radius", 160.0)))
+				if held_weapon == SkillCatalog.HELD_BLADE and center_hits > 0:
+					_ws_heal(max_hp * 0.08)
+				var immortal_r := MetaProgress.skill_rank("ws_passive_immortalscar")
+				if immortal_r > 0 and not _ws_ultimate_used:
+					_ws_ultimate_used = true
+					_ws_ultimate_dr_t = float(SkillCatalog.passive("ws_passive_immortalscar").get("ultimate_dr_duration", 5.0))
+			)
+		_:
+			## 统一武器分派入口：非刀武器保留基础倍率与动画。
+			_ws_pose("slash", 0.25)
+
+
+func _start_ws_dash(combat: Dictionary, desperate: bool) -> void:
+	_dash_dir = facing
+	attack_locked_facing = facing
+	var distance := float(combat.get("dash_distance", 120.0))
+	_dash_timer = maxf(distance / DASH_SPEED, 0.12)
+	_dash_speed = distance / _dash_timer
+	state = State.DASH
+	_ws_still_t = 0.0
+	_ws_still_stacks = 0
+	var multiplier := float(combat.get("patk_multiplier", 1.2))
+	if desperate and hp / maxf(max_hp, 1.0) <= float(combat.get("low_hp_threshold", 0.40)):
+		multiplier *= float(combat.get("low_hp_multiplier", 1.25))
+	_set_hitbox_size(Vector2(distance, float(combat.get("path_width", 40.0))), Vector2(distance * 0.5, 0.0))
+	hitbox.enable(_roll_attack_damage(_ws_patk_damage(multiplier)), 120.0, self, 16.0, 0 if desperate else int(combat.get("max_targets", 1)))
+	hitbox.set_meta("skill_id", _pending_skill)
+	hitbox.set_meta("ws_combat", combat)
+	_dash_hit_active = true
+	_start_skill_slash_fx()
+	_ws_pose("dash", _dash_timer)
+	if held_weapon == SkillCatalog.HELD_BLADE and not desperate:
+		var tail_pos := global_position + facing * distance
+		get_tree().create_timer(_dash_timer).timeout.connect(func():
+			if is_instance_valid(self):
+				_ws_area_damage(tail_pos, 38.0, _ws_patk_damage(multiplier * 0.4), 6.0, combat)
+		)
+	if held_weapon == SkillCatalog.HELD_BLADE and desperate:
+		for path_step in [0.25, 0.5, 0.75]:
+			_schedule_ws_bleed_zone(global_position + facing * distance * float(path_step), 34.0, 2.0, stats.patk * 0.10, 1)
+
+
+func _ws_patk_damage(multiplier: float) -> float:
+	return stats.patk * multiplier * _damage_mult() * _brace_skill_dmg()
+
+
+func _ws_area_damage(pos: Vector2, radius: float, damage: float, poise_damage: float, combat: Dictionary, direction: Vector2 = Vector2.ZERO, arc_degrees: float = 360.0, max_targets: int = 32, min_radius: float = 0.0) -> int:
+	var space := get_world_2d().direct_space_state
+	if space == null:
+		return 0
+	var query := PhysicsShapeQueryParameters2D.new()
+	var circle := CircleShape2D.new()
+	circle.radius = radius
+	query.shape = circle
+	query.transform = Transform2D(0.0, pos)
+	query.collision_mask = 16
+	query.collide_with_areas = true
+	query.collide_with_bodies = false
+	var accepted := 0
+	for result in space.intersect_shape(query, 64):
+		var area = result.get("collider")
+		if area == null or not area.has_method("take_hit"):
+			continue
+		var target_area := area as Area2D
+		if target_area == null:
+			continue
+		if min_radius > 0.0 and target_area.global_position.distance_to(pos) < min_radius:
+			continue
+		if direction.length_squared() > 0.01 and arc_degrees < 359.0:
+			var to_target: Vector2 = (target_area.global_position - pos).normalized()
+			if absf(direction.angle_to(to_target)) > deg_to_rad(arc_degrees * 0.5):
+				continue
+		var fake := Area2D.new()
+		fake.set_script(HitboxScript)
+		fake.damage = _roll_attack_damage(damage)
+		fake.knockback_force = float(combat.get("knockback", 120.0))
+		fake.poise_damage = poise_damage
+		fake.source = self
+		fake.set_meta("skill_id", str(combat.get("_skill_id", "")))
+		fake.set_meta("ws_combat", combat)
+		_attach_status_meta(fake, combat)
+		area.take_hit(fake)
+		fake.free()
+		accepted += 1
+		if accepted >= max_targets:
+			break
+	return accepted
+
+
+func _ws_apply_status_area(pos: Vector2, radius: float, kind: String, payload: Dictionary) -> void:
+	for enemy in get_tree().get_nodes_in_group("enemy"):
+		if enemy is Node2D and enemy.global_position.distance_to(pos) <= radius and enemy.has_method("apply_status"):
+			enemy.apply_status(kind, payload)
+
+
+func _schedule_ws_bleed_zone(pos: Vector2, radius: float, duration: float, dps: float, max_stacks: int) -> void:
+	var zone_combat := {
+		"status": "bleed",
+		"bleed_dps": dps,
+		"bleed_time": 1.2,
+		"bleed_stacks": 1,
+		"bleed_max_stacks": max_stacks,
+		"knockback": 0.0,
+	}
+	var old_fx := _skill_fx_def
+	_spawn_ground_zone(pos, radius, duration)
+	_skill_fx_def = old_fx
+	var ticks := maxi(int(ceil(duration)), 1)
+	for i in ticks:
+		get_tree().create_timer(0.1 + float(i)).timeout.connect(func():
+			if is_instance_valid(self):
+				_ws_area_damage(pos, radius, 0.0, 0.0, zone_combat)
+		)
+
+
+func _ws_pose(kind: String, duration: float) -> void:
+	if sprite == null:
+		return
+	_ws_pose_kind = kind
+	_ws_pose_t = maxf(_ws_pose_t, duration)
+	var tween := create_tween()
+	match kind:
+		"spin":
+			tween.tween_property(sprite, "rotation", sprite.rotation + TAU * 2.0, maxf(duration, 0.2))
+		"stance", "parry":
+			tween.tween_property(sprite, "scale", _body_scale(0.12, -0.12), minf(duration * 0.2, 0.18))
+			tween.tween_property(sprite, "scale", _body_scale(), maxf(duration * 0.8, 0.12))
+		"jump":
+			tween.tween_property(sprite, "position:y", -24.0, duration * 0.55).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			tween.tween_property(sprite, "position:y", 0.0, duration * 0.45).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		"rage":
+			tween.tween_property(sprite, "scale", _body_scale(0.18, 0.12), duration * 0.45)
+			tween.tween_property(sprite, "scale", _body_scale(), duration * 0.55)
+		_:
+			tween.tween_property(sprite, "rotation", direction_to_angle(facing) * 0.08, duration * 0.45)
+			tween.tween_property(sprite, "rotation", 0.0, duration * 0.55)
+
+
+func direction_to_angle(direction: Vector2) -> float:
+	return direction.angle()
+
+
+func combat_hit_modifiers(target: Node, hit_object: Object) -> Dictionary:
+	var damage_mult := 1.0
+	var poise_mult := 1.0
+	var tough_r := MetaProgress.skill_rank("ws_passive_toughbone")
+	if tough_r > 0:
+		var tough := SkillCatalog.passive("ws_passive_toughbone")
+		poise_mult *= float(tough.get("poise_damage_multiplier", 1.15)) + float(tough.get("poise_bonus_per_rank", 0.03)) * float(tough_r - 1)
+	var broken := bool(_object_property(target, "_poise_broken", false))
+	var break_r := MetaProgress.skill_rank("ws_passive_breaksight")
+	if broken and break_r > 0:
+		var breaksight := SkillCatalog.passive("ws_passive_breaksight")
+		var bonus_crit := float(breaksight.get("vs_broken_crit", 0.12)) + float(breaksight.get("crit_per_rank", 0.03)) * float(break_r - 1)
+		if randf() < bonus_crit:
+			damage_mult *= 1.0 + stats.critdmg + float(breaksight.get("vs_broken_crit_damage", 0.15)) + float(breaksight.get("crit_damage_per_rank", 0.03)) * float(break_r - 1)
+	var lethal_r := MetaProgress.skill_rank("ws_passive_lethalfocus")
+	var target_max_poise = _object_property(target, "max_poise", 0.0)
+	var target_poise = _object_property(target, "poise", target_max_poise)
+	var elite_or_boss := bool(_object_property(target, "is_elite", false)) or bool(_object_property(target, "is_boss", false))
+	if lethal_r > 0 and elite_or_boss and float(target_max_poise) > 0.0 and float(target_poise) / float(target_max_poise) <= 0.30:
+		var lethal := SkillCatalog.passive("ws_passive_lethalfocus")
+		damage_mult *= 1.0 + float(lethal.get("patk_bonus", 0.10)) + float(lethal.get("patk_per_rank", 0.02)) * float(lethal_r - 1)
+		poise_mult *= 1.0 + float(lethal.get("poise_damage_bonus", 0.20)) + float(lethal.get("poise_per_rank", 0.04)) * float(lethal_r - 1)
+	var sid := str(hit_object.get_meta("skill_id", "")) if hit_object != null else ""
+	if sid == "ws_active_shieldbreak" and broken:
+		damage_mult *= float(SkillCatalog.combat(sid, maxi(MetaProgress.skill_rank(sid), 1)).get("broken_damage_multiplier", 1.5))
+	return {"damage_mult": damage_mult, "poise_mult": poise_mult}
+
+
+func _object_property(object: Object, property_name: String, fallback):
+	if object == null:
+		return fallback
+	for info in object.get_property_list():
+		if str(info.get("name", "")) == property_name:
+			return object.get(property_name)
+	return fallback
+
+
+func on_combat_hit(target: Node, hit_object: Object, dealt_damage: float) -> void:
+	var sid := str(hit_object.get_meta("skill_id", "")) if hit_object != null else ""
+	if sid == "" and state == State.ATTACK_LIGHT:
+		var blood_r := MetaProgress.skill_rank("ws_passive_bloodinstinct")
+		if blood_r > 0:
+			var blood := SkillCatalog.passive("ws_passive_bloodinstinct")
+			var heal_ratio := float(blood.get("basic_hit_heal_max_hp", 0.005)) + float(blood.get("base_per_rank", 0.0015)) * float(blood_r - 1)
+			var str_steps := floori(stats.strength / 10.0)
+			heal_ratio += float(str_steps) * (float(blood.get("heal_per_10_str", 0.002)) + float(blood.get("str_per_rank", 0.0005)) * float(blood_r - 1))
+			_ws_heal(max_hp * minf(heal_ratio, float(blood.get("heal_cap", 0.02))))
+		if _ws_mountain_empower_t > 0.0:
+			_ws_mountain_empower_t = 0.0
+	if _ws_bloodrage_t > 0.0:
+		_ws_heal(dealt_damage * float(SkillCatalog.combat("ws_active_bloodrage", maxi(MetaProgress.skill_rank("ws_active_bloodrage"), 1)).get("lifesteal", 0.15)))
+	if held_weapon == SkillCatalog.HELD_BLADE and sid in ["ws_active_riposte", "ws_active_chainassault"]:
+		if target.has_method("apply_status"):
+			target.apply_status(StatusEffects.KIND_BLEED, {"dps": stats.patk * 0.12, "duration": 4.0, "source": self})
+	if held_weapon == SkillCatalog.HELD_BLADE and sid == "ws_active_shieldbreak":
+		var broken := bool(_object_property(target, "_poise_broken", false))
+		if broken and target.has_method("apply_status"):
+			target.apply_status(StatusEffects.KIND_BLEED, {"dps": stats.patk * 0.12, "duration": 3.0, "source": self})
+
+
+func on_enemy_killed(_target: Node) -> void:
+	var rank := MetaProgress.skill_rank("ws_passive_bloodthirst")
+	if rank <= 0:
+		return
+	var p := SkillCatalog.passive("ws_passive_bloodthirst")
+	var key := "_ws_bloodthirst_cd"
+	var now := Time.get_ticks_msec() * 0.001
+	var ready_at := float(get_meta(key, 0.0))
+	if now < ready_at:
+		return
+	var cooldown := maxf(float(p.get("internal_cooldown", 8.0)) - float(p.get("cooldown_cut_per_rank", 1.0)) * float(rank - 1), float(p.get("min_cooldown", 4.0)))
+	set_meta(key, now + cooldown)
+	_ws_heal(max_hp * (float(p.get("kill_heal_max_hp", 0.03)) + float(p.get("heal_per_rank", 0.005)) * float(rank - 1)))
 
 
 func _start_dash() -> void:
@@ -1826,7 +2269,6 @@ func _spawn_element_burst(pos: Vector2, radius: float) -> void:
 
 
 func _spawn_element_cast_fx(pos: Vector2, radius: float) -> void:
-	var col: Color = _skill_fx_def.get("flash_color", _mage_element_fx()["flash"])
 	if _mage_element() == "fire":
 		_spawn_rune_cast(pos, radius * 0.55)
 	_spawn_cast_flare(pos, radius)
@@ -1983,6 +2425,10 @@ func _roll_attack_damage(base: float) -> float:
 
 
 func _on_hitbox_hit(hurtbox: Area2D) -> void:
+	var hit_skill := str(hitbox.get_meta("skill_id", ""))
+	if hit_skill == "ws_active_dashslash":
+		hitbox.disable()
+		_dash_hit_active = false
 	call_deferred("_deferred_hit_fx", hurtbox)
 	call_deferred("_apply_pending_lifesteal")
 
@@ -2030,8 +2476,7 @@ func _apply_pending_lifesteal() -> void:
 		return
 	var heal := _pending_lifesteal
 	_pending_lifesteal = 0.0
-	hp = minf(hp + heal, max_hp)
-	hp_changed.emit(hp, max_hp)
+	_ws_heal(heal)
 
 
 func _reflect_ward_burn(from_pos: Vector2, ward_r: int) -> void:
@@ -2062,6 +2507,21 @@ func _reflect_ward_burn(from_pos: Vector2, ward_r: int) -> void:
 func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	if invincible or input_locked:
 		return
+	if _ws_parry_t > 0.0:
+		_ws_parry_t = 0.0
+		invincible = true
+		_skill_invuln_t = 0.5
+		var riposte := SkillCatalog.combat("ws_active_riposte", maxi(MetaProgress.skill_rank("ws_active_riposte"), 1))
+		riposte["_skill_id"] = "ws_active_riposte"
+		if held_weapon == SkillCatalog.HELD_BLADE:
+			riposte["status"] = "bleed"
+			riposte["bleed_dps"] = stats.patk * 0.12
+			riposte["bleed_time"] = 4.0
+		var counter_pos := from_pos if from_pos != Vector2.ZERO else global_position + facing * 36.0
+		_ws_area_damage(counter_pos, 46.0, _ws_patk_damage(float(riposte.get("patk_multiplier", 2.0))), 24.0, riposte)
+		_spawn_draw_slash((counter_pos - global_position).normalized(), 82.0)
+		_ws_pose("parry", 0.34)
+		return
 	var incoming := amount
 	incoming *= 1.0 - _passive_dr()
 	if awakening_branch == "ironwall":
@@ -2070,7 +2530,20 @@ func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	var mitigated: float = maxf(incoming - stats.pdef, 1.0) if incoming > 0.0 else 0.0
 	if mitigated <= 0.0:
 		return
-	hp = maxf(hp - mitigated, 0.0)
+	var next_hp := hp - mitigated
+	var last_r := MetaProgress.skill_rank("ws_passive_laststand")
+	if next_hp <= 0.0 and last_r > 0 and _ws_laststand_cd <= 0.0:
+		var last := SkillCatalog.passive("ws_passive_laststand")
+		hp = float(last.get("lethal_guard_hp", 1))
+		_ws_laststand_t = float(last.get("guard_duration", 2.0))
+		var cooldown := maxf(float(last.get("internal_cooldown", 60.0)) - float(last.get("cooldown_cut_per_rank", 5.0)) * float(last_r - 1), float(last.get("min_cooldown", 40.0)))
+		var immortal_r := MetaProgress.skill_rank("ws_passive_immortalscar")
+		if immortal_r > 0:
+			cooldown = maxf(cooldown - float(SkillCatalog.passive("ws_passive_immortalscar").get("laststand_cooldown_cut", 15.0)), 5.0)
+		_ws_laststand_cd = cooldown
+		_spawn_shockwave(global_position, 46.0)
+	else:
+		hp = maxf(next_hp, 0.0)
 	_hurt_flash = 0.2
 	_out_combat_t = 0.0
 	hp_changed.emit(hp, max_hp)
@@ -2079,7 +2552,12 @@ func take_damage(amount: float, from_pos: Vector2 = Vector2.ZERO) -> void:
 	if ward_r > 0 and from_pos != Vector2.ZERO:
 		_reflect_ward_burn(from_pos, ward_r)
 	if from_pos != Vector2.ZERO:
-		var push := (global_position - from_pos).normalized() * 140.0
+		var hitstun_mult := 1.0
+		var tough_r := MetaProgress.skill_rank("ws_passive_toughbone")
+		if tough_r > 0:
+			var tough := SkillCatalog.passive("ws_passive_toughbone")
+			hitstun_mult = maxf(1.0 - float(tough.get("hitstun_cut", 0.20)) - float(tough.get("hitstun_cut_per_rank", 0.04)) * float(tough_r - 1), 0.2)
+		var push := (global_position - from_pos).normalized() * 140.0 * hitstun_mult
 		velocity += push
 	if hp <= 0.0:
 		_die()

@@ -18,8 +18,8 @@ func setup(pos: Vector2, radius: float, col: Color, dur: float = 0.55) -> void:
 	_rays.clear()
 	for i in 7:
 		var ang := TAU * float(i) / 7.0 + randf_range(-0.18, 0.18)
-		var len := _radius * randf_range(0.55, 1.05)
-		_rays.append(Vector2.from_angle(ang) * len)
+		var ray_length := _radius * randf_range(0.55, 1.05)
+		_rays.append(Vector2.from_angle(ang) * ray_length)
 
 
 func _process(delta: float) -> void:

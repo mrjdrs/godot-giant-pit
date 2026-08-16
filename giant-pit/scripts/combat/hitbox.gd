@@ -6,6 +6,7 @@ var damage: float = 1.0
 var knockback_force: float = 120.0
 var poise_damage: float = 10.0
 var source: Node2D = null
+var max_hits: int = 0
 
 var _active: bool = false
 var _hit_ids: Dictionary = {}
@@ -24,11 +25,15 @@ func configure_layers(layer_bit: int, mask_bit: int) -> void:
 	collision_mask = mask_bit
 
 
-func enable(p_damage: float, p_knockback: float, p_source: Node2D = null, p_poise: float = -1.0) -> void:
+func enable(p_damage: float, p_knockback: float, p_source: Node2D = null, p_poise: float = -1.0, p_max_hits: int = 0) -> void:
+	for key in ["status_kind", "status_payload", "skill_id", "ws_combat"]:
+		if has_meta(key):
+			remove_meta(key)
 	damage = p_damage
 	knockback_force = p_knockback
 	poise_damage = p_poise if p_poise >= 0.0 else p_knockback * 0.08
 	source = p_source
+	max_hits = maxi(p_max_hits, 0)
 	_hit_ids.clear()
 	_active = true
 	monitoring = true
@@ -60,6 +65,9 @@ func _on_area_entered(area: Area2D) -> void:
 		## Defer damage application so physics flush never nests add_child / time_scale.
 		area.call_deferred("take_hit", self)
 		call_deferred("_emit_hit", area)
+		if max_hits > 0 and _hit_ids.size() >= max_hits:
+			_active = false
+			set_deferred("monitoring", false)
 
 
 func _emit_hit(area: Area2D) -> void:

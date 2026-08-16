@@ -431,7 +431,7 @@ func _refresh_header() -> void:
 		$Body/RightCol/TrainRow.visible = _training_mode
 	## 烙印/元素切换后重建树节点
 	if has_node("Body/TreeScroll/TreeWrap") and _built:
-		var wrap: Control = $Body/TreeScroll/TreeWrap
+		var tree_wrap: Control = $Body/TreeScroll/TreeWrap
 		var fam := _tree_family()
 		var need_rebuild := false
 		for sid in _tree_icons.keys():
@@ -439,7 +439,7 @@ func _refresh_header() -> void:
 				need_rebuild = true
 				break
 		if _tree_icons.is_empty() or need_rebuild or _tree_icons.size() != SkillCatalog.tree_ids(fam).size():
-			_rebuild_tree_icons(wrap)
+			_rebuild_tree_icons(tree_wrap)
 
 
 func _refresh_skill_slots() -> void:

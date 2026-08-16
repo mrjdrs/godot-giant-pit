@@ -1,5 +1,5 @@
 extends RefCounted
-## 轻量异常层：灼烧 / 减速 / 破甲 / 减攻 / 祝福。挂在敌人、木桩或玩家上 tick。
+## 轻量异常层：灼烧 / 流血 / 减速 / 破甲 / 减攻 / 祝福。挂在敌人、木桩或玩家上 tick。
 
 const KIND_BURN := "burn"
 const KIND_CHILL := "chill"
@@ -7,9 +7,15 @@ const KIND_CORRODE := "corrode"
 const KIND_WEAKEN := "weaken"
 const KIND_BLESS := "bless"
 const KIND_FREEZE := "freeze"
+const KIND_BLEED := "bleed"
 
 var _burn_t: float = 0.0
 var _burn_dps: float = 0.0
+var _bleed_t: float = 0.0
+var _bleed_dps: float = 0.0
+var _bleed_stacks: int = 0
+var _bleed_max_stacks: int = 1
+var _bleed_source = null
 var _chill_t: float = 0.0
 var _chill_slow: float = 0.0
 var _chill_stacks: int = 0
@@ -27,6 +33,10 @@ var _bless_hps: float = 0.0
 func clear_all() -> void:
 	_burn_t = 0.0
 	_burn_dps = 0.0
+	_bleed_t = 0.0
+	_bleed_dps = 0.0
+	_bleed_stacks = 0
+	_bleed_source = null
 	_chill_t = 0.0
 	_chill_slow = 0.0
 	_chill_stacks = 0
@@ -46,6 +56,13 @@ func apply(kind: String, payload: Dictionary = {}) -> void:
 		KIND_BURN:
 			_burn_dps = maxf(_burn_dps, float(payload.get("dps", 4.0)))
 			_burn_t = maxf(_burn_t, float(payload.get("duration", 3.0)))
+		KIND_BLEED:
+			_bleed_max_stacks = maxi(int(payload.get("max_stacks", 1)), 1)
+			_bleed_stacks = mini(_bleed_stacks + int(payload.get("stacks", 1)), _bleed_max_stacks)
+			_bleed_dps = maxf(_bleed_dps, float(payload.get("dps", 4.0)))
+			_bleed_t = maxf(_bleed_t, float(payload.get("duration", 3.0)))
+			if payload.has("source"):
+				_bleed_source = payload["source"]
 		KIND_CHILL:
 			var stacks_add := int(payload.get("stacks", 1))
 			_chill_stacks = mini(_chill_stacks + stacks_add, int(payload.get("max_stacks", 3)))
@@ -78,6 +95,7 @@ func tick(delta: float) -> Dictionary:
 	## 返回本帧应施加的效果：dot_damage, heal, move_mult, frozen, damage_taken_mult, outgoing_mult, shield_absorb
 	var out := {
 		"dot_damage": 0.0,
+		"dot_source": null,
 		"heal": 0.0,
 		"move_mult": 1.0,
 		"frozen": false,
@@ -91,6 +109,14 @@ func tick(delta: float) -> Dictionary:
 		out["dot_damage"] = _burn_dps * delta
 		if _burn_t <= 0.0:
 			_burn_dps = 0.0
+	if _bleed_t > 0.0:
+		_bleed_t -= delta
+		out["dot_damage"] = float(out["dot_damage"]) + _bleed_dps * float(_bleed_stacks) * delta
+		out["dot_source"] = _bleed_source
+		if _bleed_t <= 0.0:
+			_bleed_dps = 0.0
+			_bleed_stacks = 0
+			_bleed_source = null
 	if _freeze_t > 0.0:
 		_freeze_t -= delta
 		out["frozen"] = true
@@ -163,6 +189,8 @@ func visual_tint() -> Color:
 		return Color(0.78, 0.92, 1.0)
 	if _burn_t > 0.0:
 		return Color(1.0, 0.72, 0.55)
+	if _bleed_t > 0.0:
+		return Color(0.82, 0.22, 0.18)
 	if _corrode_t > 0.0:
 		return Color(0.75, 1.0, 0.55)
 	if _weaken_t > 0.0:

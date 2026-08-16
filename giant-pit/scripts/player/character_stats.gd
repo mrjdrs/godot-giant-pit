@@ -101,9 +101,6 @@ func recompute() -> void:
 	var brand: Dictionary = MindTable.BRAND_STATS.get(_brand, MindTable.BRAND_STATS["iron"])
 	var brand_dmg := float(brand.get("dmg", 1.0))
 	var stance_pct := 0.0
-	var stance_rank := MetaProgress.skill_rank("sk_stance")
-	if stance_rank > 0:
-		stance_pct += float(SkillCatalog.passive("sk_stance").get("patk_pct", 0.03)) * float(stance_rank)
 
 	aoe_mult = 1.0
 	bolt_mult = 1.0
@@ -145,6 +142,13 @@ func recompute() -> void:
 	var grove_r := MetaProgress.skill_rank("nat_grove")
 	if grove_r > 0:
 		hp_regen += float(SkillCatalog.passive("nat_grove").get("hp_regen", 0.4)) * float(grove_r)
+	var veteran_r := MetaProgress.skill_rank("ws_passive_veteran")
+	if veteran_r > 0:
+		var veteran: Dictionary = SkillCatalog.passive("ws_passive_veteran")
+		var stat_bonus := float(veteran.get("str_bonus", 3)) + float(veteran.get("stat_per_rank", 1)) * float(veteran_r - 1)
+		strength += stat_bonus
+		vitality += stat_bonus
+		hp_mult *= 1.0 + float(veteran.get("max_hp_bonus", 0.05)) + float(veteran.get("max_hp_per_rank", 0.01)) * float(veteran_r - 1)
 
 	max_hp = (BASE_MAX_HP + vitality * HP_PER_VIT + bonus_hp + float(_equip.get("max_hp", 0.0))) * hp_mult
 	patk = (BASE_PATK + strength * PATK_PER_STR + bonus_patk) * brand_dmg * (1.0 + float(_equip.get("damage", 0.0))) * (1.0 + stance_pct)
